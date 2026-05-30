@@ -20,6 +20,7 @@ from forge.etl.jira_client import JiraClient
 from forge.etl.project_matcher import match_project
 from forge.etl.quality_metrics import extract_quality_metrics
 from forge.etl.time_metrics import extract_time_metrics
+from forge.services.engine.cp_calculator import calculate_cp, needs_approval
 
 logger = get_logger(__name__)
 
@@ -186,6 +187,17 @@ class SyncOrchestrator:
         done_at: datetime | None = time_metrics.get("done_at")  # type: ignore[assignment]
         cycle_id = self._get_cycle_id(done_at=done_at)
 
+        # Talla (complexity_size) desde customfield_10851 ("Complexity")
+        complexity_option = fields.get("customfield_10851")
+        complexity_size: str | None = None
+        if isinstance(complexity_option, dict):
+            raw_value = complexity_option.get("value")
+            if raw_value:
+                complexity_size = raw_value.strip().upper()
+
+        cp = calculate_cp(complexity_size) if complexity_size else None
+        cp_approval_required = needs_approval(complexity_size) if complexity_size else False
+
         subtask_data = {
             "jira_key": key,
             "parent_story_key": fields.get("parent", {}).get("key"),
@@ -196,6 +208,9 @@ class SyncOrchestrator:
             "status": fields.get("status", {}).get("name", "Unknown"),
             "assignee_player_id": assignee_id,
             "cycle_id": cycle_id,
+            "complexity_size": complexity_size,
+            "cp": cp,
+            "cp_approval_required": cp_approval_required,
             "last_synced_at": datetime.utcnow(),
             "raw_changelog": json.dumps(issue.get("changelog", {})),
             **time_metrics,
@@ -207,6 +222,7 @@ class SyncOrchestrator:
             if existing.cp_approved_at is not None:
                 incoming_cp = subtask_data.pop("cp", None)
                 incoming_size = subtask_data.pop("complexity_size", None)
+                subtask_data.pop("cp_approval_required", None)
                 cp_changed = (incoming_cp is not None and incoming_cp != existing.cp) or (
                     incoming_size is not None and incoming_size != existing.complexity_size
                 )
@@ -232,9 +248,17 @@ class SyncOrchestrator:
 
             for k, v in subtask_data.items():
                 setattr(existing, k, v)
+
+            # Sellar cp_proposed_at solo si es la primera vez que llega con aprobación requerida
+            if cp_approval_required and existing.cp_proposed_at is None and existing.cp_approved_at is None:
+                existing.cp_proposed_at = datetime.utcnow()
+
             stats["subtasks_updated"] += 1
         else:
-            self.session.add(Subtask(**subtask_data))
+            new_subtask = Subtask(**subtask_data)
+            if cp_approval_required:
+                new_subtask.cp_proposed_at = datetime.utcnow()
+            self.session.add(new_subtask)
             stats["subtasks_created"] += 1
 
     def _get_player_id(self, assignee: dict[str, Any] | None) -> int | None:

@@ -3,6 +3,9 @@
 Importar todos los modelos aquí para que Alembic autogenerate los vea.
 """
 
+from forge.db.models.cycle import Cycle
+from forge.db.models.forecast_snapshot import ForecastSnapshot
+from forge.db.models.mvp_monthly import MvpMonthly
 from forge.db.models.achievement import Achievement
 from forge.db.models.achievement_unlock import AchievementUnlock
 from forge.db.models.audit_log import AuditLog
@@ -23,6 +26,9 @@ from forge.db.models.story import Story
 from forge.db.models.subtask import Subtask
 
 __all__ = [
+    "Cycle",
+    "ForecastSnapshot",
+    "MvpMonthly",
     "Achievement",
     "AchievementUnlock",
     "AuditLog",

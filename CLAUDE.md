@@ -859,3 +859,234 @@ uv run pytest --lf -v
 **Last Updated**: 2026-05-20  
 **Current Version**: v0.1.0 (MVP)  
 **Maintainer**: Forge Team @ Yapsi
+
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+> **Working model:** This project is driven by a "master chat" (an architect Claude instance on claude.ai)
+> that designs work packages and reviews Claude Code's output. Claude Code executes one work package
+> (WP) per session and ends every session with a **Handoff Report** (format in `FORGE_MASTER_PLAN.md`).
+> When in doubt about scope or sequencing, follow the active WP spec, not improvisation.
+
+---
+
+## Project Overview
+
+**Forge** is a dual-purpose team performance + gamification platform for the Yapsi dev team:
+
+- **Forge Ops** — dashboards and metrics for PM / tech leads (velocity, quality, forecast, cost)
+- **Forge Arena** — RPG gamification for devs (classes, avatars, XP, achievements, leaderboard, shop)
+
+**Stack:**
+- Backend: Python 3.11, FastAPI, SQLAlchemy 2.0, Alembic, `uv`
+- DB: SQLite (MVP) → PostgreSQL (v0.4+)
+- Frontend: Next.js 16 (App Router), TypeScript, Tailwind v4, shadcn/ui
+- Integration: Jira Cloud REST v3 via httpx async
+- Jira instance: `https://beyapsi-org.atlassian.net` (project key `YAP`)
+- Repo: monorepo (`forge/` with `backend/` + `frontend/`), git on `master`
+
+**Core domain logic:**
+- **CP (Complexity Points)** — per-subtask, immutable after PM approval (`CPImmutableError` if mutated)
+- **SP (Score Points)** — gamification currency: `CP × multipliers + bonuses − penalties`
+- **Business hours** — exclude weekends, holidays, lunch (9-18h, 14-15h lunch, America/Mexico_City)
+- **Engine versions** — versioned rules for reproducible calculations
+
+---
+
+## CURRENT STATE (29 May 2026) — read this first
+
+### Real data synced from Jira
+| Entity | Count |
+|---|---|
+| Players | 14 |
+| Projects | 1 (YAP) |
+| Epics | 44 |
+| Stories | 142 |
+| Subtasks | 383 (237 Done) |
+| Subtasks w/ approved CP | 8 / 383 (approval flow UC-04 not built) |
+| Sprints | 46 (32 closed, W22 active, 12 future) |
+
+### What's BUILT and working
+- ✅ **UC-01 Jira ETL** — full sync pipeline (jira_client, time_metrics, quality_metrics, project_matcher, sync_orchestrator)
+- ✅ **Dashboard Service + API** — `GET /api/dashboard/sprint?project_code=&sprint_id=` with KPIs, area progress, player status, alerts
+- ✅ **Engine CP/SP v2.0** — cp_calculator, multiplier_calculator, sp_calculator, debuff_detector, engine_orchestrator (no approval UI yet)
+- ✅ **Repositories layer** — player, sprint, subtask, project, sp_adjustment + generic base
+- ✅ **Sprint management** — `make sprint-generate` (idempotent weekly sprint generation, Mon-Sun)
+- ✅ **Frontend dashboard** — `/dashboard` Server Component consuming the dashboard API; OpsHeader (project filter, sync), sidebar nav, 6 components rendering live data
+
+### What's NOT built (the work ahead)
+Ops admin APIs (UC-02/04/05/06/07), Arena entirely (UC-09–15), Pulse (UC-16), Monthly MVP (UC-17), and the frontend for all of the above. Overall completion ≈ 35%.
+
+---
+
+## PROJECT DIRECTION — Ritmo Operativo migration (ACTIVE)
+
+The biggest near-term change: **the Sprint model is being replaced by the Ritmo Operativo model** (JPDS Doc 03.1). This is decided and canonical. Do not build new features on the legacy `sprints` table once WP-01 lands.
+
+### Three temporal horizons (replace the Sprint)
+| Horizon | Window | Purpose | Commits scope? |
+|---|---|---|---|
+| **Pulso** | Live / real-time | Absorb chaos without polluting metrics | No |
+| **Ciclo** | Mon–Fri (1 work week) | Ritual unit: MVP, penalties, weekly leaderboard | No |
+| **Ventana Móvil** | 4 rolling closed cycles | Forecast (P30/P50/P85), cost per area, dir comms | Probabilistic only |
+
+### Cycle lifecycle
+`planned → active → closed → archived`
+- `planned → active`: Monday 00:00 (auto, scheduler)
+- `active → closed`: Friday 18:00 + ritual (MVP assigned + penalties applied) — manual
+- `closed → archived`: 7 days after close (auto, scheduler)
+- Only ONE `active` cycle at a time (unique index)
+- Closed cycle is immutable except MVP edit within 24 business hours
+
+### What changes vs the old Sprint
+- Table `sprints` → `cycles` (adds iso_year, iso_week, 4 states, closing_snapshot_json)
+- FK rename in 3 tables: `sprint_id` → `cycle_id` (subtasks, sp_adjustments, leaderboard_snapshots)
+- New tables: `mvp_monthly`, `forecast_snapshots`
+- New SQL views: `cycles_active`, `cycle_metrics`, `rolling_window_4`, `rolling_window_4_by_area`, `pulse_now`, `current_forecast_by_epic`
+- `leaderboard_snapshots.period_type` adds `'weekly'`, `'rolling_4'`
+- MVP semanal: **+5 SP** (buff B17, was +10) | MVP del mes: **+10 SP** (new buff B17M)
+- Engine bump v2.0 → v2.1
+
+Reference specs (keep in `backend/specs/` or `docs/`): `Documento_03.1_Ritmo_Operativo.md`, `forge_entidades_v2_ciclos.md`, `UC-16_pulso_operativo.md`, `UC-17_cierre_mensual.md`.
+
+---
+
+## Commands Reference
+
+All commands from `backend/`. Always use `uv` (never pip).
+
+```bash
+# Setup
+uv sync                              # install deps
+cp .env.example .env                 # then fill Jira creds + ENCRYPTION_KEY
+make db-init                         # alembic upgrade head
+uv run python scripts/verify_setup.py
+
+# Dev
+make dev                             # uvicorn :8000 hot reload
+curl http://localhost:8000/health
+
+# DB
+make db-init                         # apply migrations
+make db-reset                        # DESTRUCTIVE drop+recreate
+uv run alembic revision -m "msg"     # new migration
+uv run alembic current               # current version
+uv run alembic downgrade -1          # rollback one
+
+# Data ops (CLI)
+make sync                            # pull from Jira (UC-01)
+make seed                            # load YAML catalogs
+make recalc                          # rerun engine on all subtasks
+make sprint-generate                 # generate weekly sprints forward (idempotent)
+make shell                           # ipython with DB context
+
+# Tests
+make test                            # all
+make test-unit                       # fast only
+make test-cov                        # coverage HTML+term
+uv run pytest tests/unit/core/test_config.py::test_x -v   # single
+
+# Quality
+make lint                            # ruff check
+make format                          # ruff format
+make typecheck                       # mypy strict
+```
+
+---
+
+## Architecture (layers)
+
+```
+Jira Cloud REST API
+   ↓
+etl/            JiraClient, TimeMetrics, QualityMetrics, ProjectMatcher, SyncOrchestrator
+   ↓
+db/models/      SQLAlchemy models (Player, Epic, Story, Subtask, Cycle*, Buff, Debuff,
+                Achievement, ShopItem, SpAdjustment, LeaderboardSnapshot, EngineVersion, AuditLog ...)
+   ↑
+repositories/   data access (player, subtask, cycle*, project, sp_adjustment + base)
+   ↑
+services/       business logic + engine (dashboard_service, engine/*, + UC services as built)
+   ↑
+scheduler/      APScheduler jobs (cycle open/close-notify/archive) — added in cycles refactor
+   ↑
+api/routers/    FastAPI endpoints (integrations ✅, dashboard ✅, + per-UC)
+   ↑
+schemas/        Pydantic DTOs
+```
+
+(* `Cycle` replaces `Sprint` after WP-01.)
+
+### Key engine concepts
+- **CP** computed from talla (XS=1,S=2,M=3,L=5,XL=8; XXL=13 → must be split). L/XL require PM approval (UC-04). Immutable once `cp_approved_at` set.
+- **SP** = `CP × M_calidad × M_eficiencia × M_dificultad × M_lider × M_cooperacion + flat_bonuses − penalties`. All multipliers default 1.0.
+- **Business hours** in `core/time_utils.py` — single source of truth for time math.
+
+---
+
+## Code Style & Conventions
+
+- Line length 100 (ruff). Rules: E,W,F,I,B,C4,UP.
+- mypy strict; all new code must pass `make typecheck` (typed signatures, `X | None`, etc.).
+- Python 3.11+: `match`, `X | Y` unions, `list[T]`/`dict[K,V]`.
+- Source root `backend/src/` — imports as `from forge.xxx import ...`.
+- Docstrings Google style for public APIs.
+
+### Adding a model
+1. `src/forge/db/models/x.py` → 2. export in `__init__.py` → 3. `alembic revision` → 4. edit migration → 5. `make db-init` → 6. factory in `tests/factories/` → 7. unit test.
+
+### Adding an endpoint
+1. schema in `src/forge/schemas/` → 2. router in `src/forge/api/routers/` → 3. register in `main.py` → 4. integration test → 5. document here.
+
+---
+
+## Testing Conventions
+
+- `tests/conftest.py`: `test_db_engine` (in-memory SQLite), `test_session`, `sample_player`.
+- `tests/factories/` (factory-boy), `tests/fixtures/jira_payloads/` (respx mocks).
+- Markers: `slow`, `integration`, `e2e` — exclude with `-m "not integration"`.
+- Async mode auto. Coverage target 80% overall; 100% on engine, CP immutability, business hours.
+
+---
+
+## Troubleshooting (known issues)
+
+| Problem | Fix |
+|---|---|
+| `error parsing value for field "cors_origins"` | `cors_origins` is a string + `cors_origins_list` property (config.py) |
+| `Attribute name 'metadata' is reserved` | AuditLog column renamed to `extra_metadata` |
+| `Can't locate revision 'XXX'` | `make db-reset` or `alembic stamp head` |
+| `forge: command not found` | `uv sync`, then `uv run forge` |
+| Jira 401 | regenerate API token |
+| `database is locked` in tests | use `:memory:` DB |
+
+---
+
+## Roadmap (work-package based)
+
+Sequenced by dependency. Each WP = one Claude Code session with a Handoff Report. Detail in `FORGE_MASTER_PLAN.md`.
+
+- [ ] **WP-01** — DB refactor: Sprints → Cycles (Ritmo Operativo schema + backend + dashboard) ← **ACTIVE**
+- [ ] **WP-02** — UC-04 CP approval flow (backend + Ops UI)
+- [ ] **WP-03** — UC-05 Cycle close + MVP semanal (+5 SP, snapshots, forecast trigger)
+- [ ] **WP-04** — UC-06 Manual penalties + appeals
+- [ ] **WP-05** — UC-07 Forecast P30/P50/P85 + UC-16 Pulse
+- [ ] **WP-06** — UC-17 Monthly MVP close (+10 SP)
+- [ ] **WP-07** — UC-02 Players admin
+- [ ] **WP-08** — UC-09 Arena auth (login/sessions)
+- [ ] **WP-09** — UC-15 + UC-10 Onboarding (class/avatar) + Profile
+- [ ] **WP-10** — UC-11 + UC-12 Leaderboard + SP detail
+- [ ] **WP-11** — UC-13 + UC-14 Achievements + Shop
+- [ ] **WP-12** — Frontend polish + E2E across Ops & Arena
+
+### Done
+- [x] **UC-01** Jira integration (ETL, API, CLI)
+- [x] Dashboard service + API + frontend dashboard
+- [x] Engine CP/SP v2.0
+- [x] Repositories layer
+- [x] Sprint management CLI
+
+---
+
+**Last Updated:** 2026-05-29 · **Version:** v0.1.x (MVP) · **Maintainer:** Forge Team @ Yapsi

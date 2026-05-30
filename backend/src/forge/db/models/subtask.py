@@ -42,6 +42,9 @@ class Subtask(Base):
     sprint_id: Mapped[int | None] = mapped_column(
         Integer, ForeignKey("sprints.id", ondelete="SET NULL"), index=True
     )
+    cycle_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("cycles.id", ondelete="SET NULL"), index=True
+    )
 
     # Complexity Points (estática post-aprobación)
     complexity_size: Mapped[str | None] = mapped_column(String(5))

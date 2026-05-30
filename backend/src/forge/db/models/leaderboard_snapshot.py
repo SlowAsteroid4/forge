@@ -17,6 +17,9 @@ class LeaderboardSnapshot(Base):
     sprint_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("sprints.id", ondelete="CASCADE"), nullable=False, index=True
     )
+    cycle_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("cycles.id", ondelete="SET NULL"), index=True
+    )
     player_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("players.id", ondelete="CASCADE"), nullable=False, index=True
     )

@@ -1,0 +1,172 @@
+# Sprints de 1 semana (lunes a domingo), formato ISO
+# Sprint activo: W21 — 2026-05-18 al 2026-05-24
+# Histórico completo desde el inicio del proyecto (Oct 2025).
+
+# ─── 2025 ──────────────────────────────────────────────────────────────────
+- name: "Sprint 2025-W41"
+  start_date: "2025-10-06"
+  end_date: "2025-10-12"
+  is_closed: true
+
+- name: "Sprint 2025-W42"
+  start_date: "2025-10-13"
+  end_date: "2025-10-19"
+  is_closed: true
+
+- name: "Sprint 2025-W43"
+  start_date: "2025-10-20"
+  end_date: "2025-10-26"
+  is_closed: true
+
+- name: "Sprint 2025-W44"
+  start_date: "2025-10-27"
+  end_date: "2025-11-02"
+  is_closed: true
+
+- name: "Sprint 2025-W45"
+  start_date: "2025-11-03"
+  end_date: "2025-11-09"
+  is_closed: true
+
+- name: "Sprint 2025-W46"
+  start_date: "2025-11-10"
+  end_date: "2025-11-16"
+  is_closed: true
+
+- name: "Sprint 2025-W47"
+  start_date: "2025-11-17"
+  end_date: "2025-11-23"
+  is_closed: true
+
+- name: "Sprint 2025-W48"
+  start_date: "2025-11-24"
+  end_date: "2025-11-30"
+  is_closed: true
+
+- name: "Sprint 2025-W49"
+  start_date: "2025-12-01"
+  end_date: "2025-12-07"
+  is_closed: true
+
+- name: "Sprint 2025-W50"
+  start_date: "2025-12-08"
+  end_date: "2025-12-14"
+  is_closed: true
+
+- name: "Sprint 2025-W51"
+  start_date: "2025-12-15"
+  end_date: "2025-12-21"
+  is_closed: true
+
+- name: "Sprint 2025-W52"
+  start_date: "2025-12-22"
+  end_date: "2025-12-28"
+  is_closed: true
+
+# ─── 2026 (Q1) ─────────────────────────────────────────────────────────────
+# W01 2026 empieza el 29-dic-2025 (ISO week: la semana que contiene el primer jueves de 2026)
+- name: "Sprint 2026-W01"
+  start_date: "2025-12-29"
+  end_date: "2026-01-04"
+  is_closed: true
+
+- name: "Sprint 2026-W02"
+  start_date: "2026-01-05"
+  end_date: "2026-01-11"
+  is_closed: true
+
+- name: "Sprint 2026-W03"
+  start_date: "2026-01-12"
+  end_date: "2026-01-18"
+  is_closed: true
+
+- name: "Sprint 2026-W04"
+  start_date: "2026-01-19"
+  end_date: "2026-01-25"
+  is_closed: true
+
+- name: "Sprint 2026-W05"
+  start_date: "2026-01-26"
+  end_date: "2026-02-01"
+  is_closed: true
+
+- name: "Sprint 2026-W06"
+  start_date: "2026-02-02"
+  end_date: "2026-02-08"
+  is_closed: true
+
+- name: "Sprint 2026-W07"
+  start_date: "2026-02-09"
+  end_date: "2026-02-15"
+  is_closed: true
+
+- name: "Sprint 2026-W08"
+  start_date: "2026-02-16"
+  end_date: "2026-02-22"
+  is_closed: true
+
+- name: "Sprint 2026-W09"
+  start_date: "2026-02-23"
+  end_date: "2026-03-01"
+  is_closed: true
+
+- name: "Sprint 2026-W10"
+  start_date: "2026-03-02"
+  end_date: "2026-03-08"
+  is_closed: true
+
+- name: "Sprint 2026-W11"
+  start_date: "2026-03-09"
+  end_date: "2026-03-15"
+  is_closed: true
+
+# ─── 2026 (Q2) ─────────────────────────────────────────────────────────────
+- name: "Sprint 2026-W12"
+  start_date: "2026-03-16"
+  end_date: "2026-03-22"
+  is_closed: true
+
+- name: "Sprint 2026-W13"
+  start_date: "2026-03-23"
+  end_date: "2026-03-29"
+  is_closed: true
+
+- name: "Sprint 2026-W14"
+  start_date: "2026-03-30"
+  end_date: "2026-04-05"
+  is_closed: true
+
+- name: "Sprint 2026-W15"
+  start_date: "2026-04-06"
+  end_date: "2026-04-12"
+  is_closed: true
+
+- name: "Sprint 2026-W16"
+  start_date: "2026-04-13"
+  end_date: "2026-04-19"
+  is_closed: true
+
+- name: "Sprint 2026-W17"
+  start_date: "2026-04-20"
+  end_date: "2026-04-26"
+  is_closed: true
+
+- name: "Sprint 2026-W18"
+  start_date: "2026-04-27"
+  end_date: "2026-05-03"
+  is_closed: true
+
+- name: "Sprint 2026-W19"
+  start_date: "2026-05-04"
+  end_date: "2026-05-10"
+  is_closed: true
+
+- name: "Sprint 2026-W20"
+  start_date: "2026-05-11"
+  end_date: "2026-05-17"
+  is_closed: true
+
+- name: "Sprint 2026-W21"
+  start_date: "2026-05-18"
+  end_date: "2026-05-24"
+  is_closed: false   # ← sprint activo

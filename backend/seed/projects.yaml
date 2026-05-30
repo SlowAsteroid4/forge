@@ -1,0 +1,7 @@
+# Proyectos / Dungeons de Forge
+
+- code: "YAP"
+  jira_prefix: "YAP"
+  internal_name: "Yapsi"
+  arena_name: "Yapsi"
+  is_active: true

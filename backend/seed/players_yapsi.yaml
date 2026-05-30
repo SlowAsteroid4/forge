@@ -1,0 +1,122 @@
+# Players del equipo Yapsi
+# Generado desde Jira el 2026-05-22. Áreas inferidas desde issue types asignados.
+# Leads: Alan Daniel Ríos (BE) y Héctor López (FE) — activan M_lider en el engine.
+# Editar manualmente: employment_type, monthly_salary / hourly_rate (privados).
+
+# ─── PM ───────────────────────────────────────────────
+- jira_account_id: "62152ed997d313006ba4c232"
+  display_name: "Saúl Iván Hernández Enríquez"
+  email: "saul@beyapsi.com"
+  area: "PM"
+  employment_type: "internal"
+  is_lead: true
+  is_active: true
+
+# ─── Backend ──────────────────────────────────────────
+- jira_account_id: "712020:094ab8bd-7019-4ba2-99ca-0770d5c53851"
+  display_name: "Alan Daniel Ríos López"
+  email: null
+  area: "BE"
+  employment_type: "internal"
+  is_lead: true       # Lead BE — activa M_lider
+  is_active: true
+
+- jira_account_id: "712020:8a8c40da-e321-41e1-b70c-391b92dba6d3"
+  display_name: "Artemio Ramirez"
+  email: null
+  area: "BE"
+  employment_type: "internal"
+  is_lead: false
+  is_active: true
+
+- jira_account_id: "712020:5fe47d40-74ef-421d-b0be-e67419d49a08"
+  display_name: "Diego Salvador Candia Fullen"
+  email: null
+  area: "BE"
+  employment_type: "internal"
+  is_lead: false
+  is_active: true
+
+- jira_account_id: "712020:306bd3d6-6ce2-4e7c-a4ca-265297c06c99"
+  display_name: "Edgar Isaac Marroquin Alvarez"
+  email: null
+  area: "BE"
+  employment_type: "internal"
+  is_lead: false
+  is_active: true
+
+- jira_account_id: "6205f11335a62a006845089f"
+  display_name: "José Manuel Cazares Vega"
+  email: null
+  area: "BE"
+  employment_type: "internal"
+  is_lead: false
+  is_active: true
+
+- jira_account_id: "712020:3de9cf77-f768-4333-a4e2-e68d98f5c98b"
+  display_name: "Juan Castillo"
+  email: null
+  area: "BE"
+  employment_type: "internal"
+  is_lead: false
+  is_active: true
+
+# ─── Frontend ─────────────────────────────────────────
+- jira_account_id: "712020:fa830f97-d4e2-4550-9075-5c379b5731cc"
+  display_name: "Héctor López"
+  email: null
+  area: "FE"
+  employment_type: "internal"
+  is_lead: true       # Lead FE — activa M_lider
+  is_active: true
+
+- jira_account_id: "5aa0237db99ac53e2815a723"
+  display_name: "Luis Alberto Cruz Mora"
+  email: null
+  area: "FE"
+  employment_type: "internal"
+  is_lead: false
+  is_active: true
+
+- jira_account_id: "63c053a550b9490924dd009c"
+  display_name: "Sergio de Jesús Ayala Magallón"
+  email: null
+  area: "FE"
+  employment_type: "internal"
+  is_lead: false
+  is_active: true
+
+- jira_account_id: "62152ed92d057500723f0d0e"
+  display_name: "Yair Emmanuel Arrias Madera"
+  email: null
+  area: "FE"
+  employment_type: "internal"
+  is_lead: false
+  is_active: true
+
+# ─── Design ───────────────────────────────────────────
+- jira_account_id: "63c97b19d16a886a25e6bfb4"
+  display_name: "Jesús Mancilla"
+  email: null
+  area: "DESIGN"
+  employment_type: "internal"
+  is_lead: false
+  is_active: true
+
+# ─── Database ─────────────────────────────────────────
+- jira_account_id: "712020:6e81cc28-c1f7-4800-9946-e2cb74989a7b"
+  display_name: "Alondra Daniela Godinez Razo"
+  email: null
+  area: "DB"
+  employment_type: "internal"
+  is_lead: false
+  is_active: true
+
+# ─── Producto (cuenta de equipo, no participa en leaderboard) ──
+- jira_account_id: "712020:e855360b-0b7a-4b92-8d9f-33cc76885705"
+  display_name: "Equipo de Producto"
+  email: null
+  area: "PO"
+  employment_type: "internal"
+  is_lead: false
+  is_active: true

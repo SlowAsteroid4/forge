@@ -1,5 +1,6 @@
 "use client";
 
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
@@ -17,6 +18,8 @@ import {
   FileText,
   ChevronDown,
 } from "lucide-react";
+
+const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api";
 
 interface NavItem {
   label: string;
@@ -49,7 +52,6 @@ const navSections: NavSection[] = [
         label: "Aprobaciones CP",
         href: "/operations/cp-approvals",
         icon: <CheckSquare size={16} />,
-        disabled: true,
       },
       {
         label: "Penalizaciones",
@@ -114,6 +116,14 @@ const navSections: NavSection[] = [
 
 export function OpsSidebar() {
   const pathname = usePathname();
+  const [cpPendingCount, setCpPendingCount] = useState(0);
+
+  useEffect(() => {
+    fetch(`${API_BASE}/cp-approvals/pending`)
+      .then((r) => r.json())
+      .then((data: { total?: number }) => setCpPendingCount(data.total ?? 0))
+      .catch(() => {});
+  }, []);
 
   return (
     <nav className="flex flex-col w-56 min-h-screen border-r border-border bg-background py-4">
@@ -154,9 +164,16 @@ export function OpsSidebar() {
                       >
                         {item.icon}
                         <span className="flex-1">{item.label}</span>
+                        {/* Badge estático definido en navSections */}
                         {item.badge != null && item.badge > 0 && (
                           <Badge variant="destructive" className="h-4 px-1 text-[10px]">
                             {item.badge}
+                          </Badge>
+                        )}
+                        {/* Badge dinámico para aprobaciones CP */}
+                        {item.href === "/operations/cp-approvals" && cpPendingCount > 0 && (
+                          <Badge variant="destructive" className="h-4 px-1 text-[10px]">
+                            {cpPendingCount}
                           </Badge>
                         )}
                       </Link>

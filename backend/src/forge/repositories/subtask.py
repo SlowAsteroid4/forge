@@ -54,12 +54,27 @@ class SubtaskRepository(BaseRepository[Subtask, str]):
         player_id: int | None = None,
         project_code: str | None = None,
         min_waiting_days: int | None = None,
+        statuses: list[str] | None = None,
     ) -> list[Subtask]:
-        """Subtasks L/XL pendientes de aprobación de CP, con filtros opcionales."""
+        """Subtasks L/XL pendientes de aprobación de CP, con filtros opcionales.
+
+        El parámetro ``statuses`` permite aplicar un gate por status (p.ej.
+        ``['Backlog']`` para aprobar antes de que arranque el trabajo, que es lo
+        que indica AC-4.2).  El default ``None`` desactiva el filtro y muestra
+        todas las tallas L/XL sin importar el status — comportamiento actual en
+        producción mientras el equipo decide dónde colocar el gate.
+
+        ⚠️ DECISIÓN PENDIENTE (chat maestro): la distribución real es
+           Done=18, Ready=7, In QA=6, Ready for QA=2, Backlog=1, otros=1.
+           Usar ``statuses=['Backlog']`` dejaría la cola con 1 item.
+           ¿El gate va en Backlog (pre-work) o se valida post-trabajo?
+        """
         stmt = select(Subtask).where(
             Subtask.cp_approval_required.is_(True),
             Subtask.cp_approved_at.is_(None),
         )
+        if statuses is not None:
+            stmt = stmt.where(Subtask.status.in_(statuses))
         if area is not None:
             stmt = stmt.where(Subtask.area == area)
         if player_id is not None:

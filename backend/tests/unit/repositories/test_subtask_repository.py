@@ -14,7 +14,7 @@ def _make_subtask(
     key: str,
     status: str = "In Progress",
     player_id: int | None = None,
-    sprint_id: int | None = None,
+    cycle_id: int | None = None,
     area: str = "BE",
     cp: int | None = None,
     sp_final: float | None = None,
@@ -28,7 +28,7 @@ def _make_subtask(
         summary=f"Summary of {key}",
         status=status,
         assignee_player_id=player_id,
-        sprint_id=sprint_id,
+        cycle_id=cycle_id,
         cp=cp,
         sp_final=sp_final,
         cp_approval_required=cp_approval_required,
@@ -68,13 +68,13 @@ def test_list_by_assignee_correct(test_session: Session) -> None:
     assert {"T-10", "T-11"} == keys
 
 
-def test_list_by_assignee_with_sprint_filter(test_session: Session) -> None:
+def test_list_by_assignee_with_cycle_filter(test_session: Session) -> None:
     repo = SubtaskRepository(test_session)
-    test_session.add(_make_subtask("T-20", player_id=1, sprint_id=5))
-    test_session.add(_make_subtask("T-21", player_id=1, sprint_id=6))
+    test_session.add(_make_subtask("T-20", player_id=1, cycle_id=5))
+    test_session.add(_make_subtask("T-21", player_id=1, cycle_id=6))
     test_session.flush()
 
-    results = repo.list_by_assignee(player_id=1, sprint_id=5)
+    results = repo.list_by_assignee(player_id=1, cycle_id=5)
 
     assert len(results) == 1
     assert results[0].jira_key == "T-20"
@@ -95,13 +95,13 @@ def test_list_done_only_done_status(test_session: Session) -> None:
     assert "T-31" not in keys
 
 
-def test_list_done_sprint_filter(test_session: Session) -> None:
+def test_list_done_cycle_filter(test_session: Session) -> None:
     repo = SubtaskRepository(test_session)
-    test_session.add(_make_subtask("T-40", status="Done", sprint_id=10))
-    test_session.add(_make_subtask("T-41", status="Done", sprint_id=11))
+    test_session.add(_make_subtask("T-40", status="Done", cycle_id=10))
+    test_session.add(_make_subtask("T-41", status="Done", cycle_id=11))
     test_session.flush()
 
-    results = repo.list_done(sprint_id=10)
+    results = repo.list_done(cycle_id=10)
 
     assert len(results) == 1
     assert results[0].jira_key == "T-40"

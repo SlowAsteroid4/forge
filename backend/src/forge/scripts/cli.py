@@ -626,9 +626,7 @@ def sprint_generate(
 ):
     """[DEPRECATED] Alias de cycle-generate. Usar forge cycle-generate en su lugar."""
     console.print("[yellow]⚠ sprint-generate está deprecado. Usa forge cycle-generate[/yellow]")
-    from click import Context
-    ctx = typer.get_current_context()
-    ctx.invoke(cycle_generate, weeks=weeks, start=start, dry_run=dry_run)
+    cycle_generate(weeks=weeks, start=start, dry_run=dry_run)
 
 
 @app.command()
@@ -653,7 +651,7 @@ def shell():
     except ImportError:
         console.print("[red]IPython no instalado. Agrega ipython a dev deps.[/red]")
     finally:
-        session.close()  # type: ignore[possibly-undefined]
+        session.close()  # noqa: F821  (session defined in try block)
 
 
 @app.command()

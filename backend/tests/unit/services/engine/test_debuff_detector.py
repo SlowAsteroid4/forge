@@ -3,7 +3,7 @@
 import pytest
 from datetime import datetime, date
 
-from forge.db.models.sprint import Sprint
+from forge.db.models.cycle import Cycle
 from forge.db.models.subtask import Subtask
 from forge.services.engine.debuff_detector import (
     DetectedDebuff,
@@ -56,12 +56,14 @@ def _subtask(
     )
 
 
-def _sprint(*, is_closed: bool = True, name: str = "Sprint 2026-W20") -> Sprint:
-    return Sprint(
+def _cycle(*, status: str = "closed", name: str = "Ciclo 2026-W20") -> Cycle:
+    return Cycle(
         name=name,
-        start_date=date(2026, 5, 11),
-        end_date=date(2026, 5, 17),
-        is_closed=is_closed,
+        iso_year=2026,
+        iso_week=20,
+        start_date=date(2026, 5, 12),
+        end_date=date(2026, 5, 16),
+        status=status,
     )
 
 
@@ -245,39 +247,46 @@ class TestDetectD11:
 
 
 class TestDetectD13:
-    def test_no_debuff_when_sprint_is_none(self) -> None:
+    def test_no_debuff_when_cycle_is_none(self) -> None:
         st = _subtask(status="In Progress", done_at=None)
-        assert detect_d13(st, sprint=None) is None
+        assert detect_d13(st, cycle=None) is None
 
-    def test_no_debuff_when_sprint_is_open(self) -> None:
+    def test_no_debuff_when_cycle_is_active(self) -> None:
         st = _subtask(status="In Progress", done_at=None)
-        sprint = _sprint(is_closed=False)
-        assert detect_d13(st, sprint=sprint) is None
+        cycle = _cycle(status="active")
+        assert detect_d13(st, cycle=cycle) is None
 
-    def test_triggers_when_sprint_closed_and_task_not_done(self) -> None:
+    def test_triggers_when_cycle_closed_and_task_not_done(self) -> None:
         st = _subtask(status="In Progress", done_at=None)
-        sprint = _sprint(is_closed=True)
-        result = detect_d13(st, sprint=sprint)
+        cycle = _cycle(status="closed")
+        result = detect_d13(st, cycle=cycle)
         assert result is not None
         assert result.catalog_code == "D13"
         assert result.amount_sp == pytest.approx(_D13_PENALTY)
 
-    def test_no_debuff_when_sprint_closed_but_task_done(self) -> None:
-        st = _subtask(status="Done", done_at=datetime(2026, 5, 17))
-        sprint = _sprint(is_closed=True)
-        assert detect_d13(st, sprint=sprint) is None
-
-    def test_no_debuff_when_sprint_closed_but_task_cancelled(self) -> None:
-        st = _subtask(status="Cancelled", done_at=None)
-        sprint = _sprint(is_closed=True)
-        assert detect_d13(st, sprint=sprint) is None
-
-    def test_reason_mentions_sprint_name(self) -> None:
-        st = _subtask(status="Blocked", done_at=None)
-        sprint = _sprint(is_closed=True, name="Sprint 2026-W15")
-        result = detect_d13(st, sprint=sprint)
+    def test_triggers_when_cycle_archived_and_task_not_done(self) -> None:
+        st = _subtask(status="In Progress", done_at=None)
+        cycle = _cycle(status="archived")
+        result = detect_d13(st, cycle=cycle)
         assert result is not None
-        assert "Sprint 2026-W15" in result.reason
+        assert result.catalog_code == "D13"
+
+    def test_no_debuff_when_cycle_closed_but_task_done(self) -> None:
+        st = _subtask(status="Done", done_at=datetime(2026, 5, 16))
+        cycle = _cycle(status="closed")
+        assert detect_d13(st, cycle=cycle) is None
+
+    def test_no_debuff_when_cycle_closed_but_task_cancelled(self) -> None:
+        st = _subtask(status="Cancelled", done_at=None)
+        cycle = _cycle(status="closed")
+        assert detect_d13(st, cycle=cycle) is None
+
+    def test_reason_mentions_cycle_name(self) -> None:
+        st = _subtask(status="Blocked", done_at=None)
+        cycle = _cycle(status="closed", name="Ciclo 2026-W15")
+        result = detect_d13(st, cycle=cycle)
+        assert result is not None
+        assert "Ciclo 2026-W15" in result.reason
 
 
 # ── detect_all ────────────────────────────────────────────────────────────
@@ -294,8 +303,8 @@ class TestDetectAll:
             lt_biz_hours=8.0,
             done_at=datetime(2026, 5, 20),
         )
-        sprint = _sprint(is_closed=True)
-        result = detect_all(st, sprint=sprint)
+        cycle = _cycle(status="closed")
+        result = detect_all(st, cycle=cycle)
         assert result == []
 
     def test_multiple_debuffs_detected(self) -> None:
@@ -309,8 +318,8 @@ class TestDetectAll:
             lt_biz_hours=60.0,      # D11
             done_at=None,
         )
-        sprint = _sprint(is_closed=True)  # D13
-        result = detect_all(st, sprint=sprint)
+        cycle = _cycle(status="closed")  # D13
+        result = detect_all(st, cycle=cycle)
         codes = {d.catalog_code for d in result}
         # D01 NO aplica porque qa_attempts > 1
         assert "D03" in codes
@@ -320,14 +329,14 @@ class TestDetectAll:
         assert "D13" in codes
         assert "D01" not in codes
 
-    def test_detect_all_without_sprint_skips_d13(self) -> None:
+    def test_detect_all_without_cycle_skips_d13(self) -> None:
         st = _subtask(
             status="In Progress",
             done_at=None,
             lt_biz_hours=60.0,     # D11
             blocked_biz_hours=20.0, # D10
         )
-        result = detect_all(st, sprint=None)
+        result = detect_all(st, cycle=None)
         codes = {d.catalog_code for d in result}
         assert "D13" not in codes
         assert "D10" in codes

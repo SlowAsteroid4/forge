@@ -12,12 +12,16 @@ import pytest
 from sqlalchemy.orm import Session
 
 from forge.core.exceptions import NotFoundError
+from forge.db.models.cycle import Cycle
 from forge.db.models.engine_version import EngineVersion
 from forge.db.models.player import Player
 from forge.db.models.sp_adjustment import SpAdjustment
-from forge.db.models.sprint import Sprint
 from forge.db.models.subtask import Subtask
-from forge.services.engine.engine_orchestrator import recalculate_sprint, recalculate_subtask
+from forge.services.engine.engine_orchestrator import (
+    recalculate_cycle,
+    recalculate_sprint,  # deprecated alias — still tested for backwards compat
+    recalculate_subtask,
+)
 
 
 # ── Helpers de setup ──────────────────────────────────────────────────────
@@ -49,22 +53,25 @@ def _create_system_player(session: Session) -> Player:
     return p
 
 
-def _create_sprint(session: Session, *, is_closed: bool = False) -> Sprint:
+def _create_cycle(session: Session, *, status: str = "active") -> Cycle:
     today = date.today()
-    sprint = Sprint(
-        name=f"Sprint Test {today.isoformat()}",
-        start_date=today - timedelta(days=7),
-        end_date=today + timedelta(days=1),
-        is_closed=is_closed,
+    iso = today.isocalendar()
+    cycle = Cycle(
+        name=f"Ciclo Test {today.isoformat()}",
+        iso_year=iso[0],
+        iso_week=iso[1],
+        start_date=today - timedelta(days=4),
+        end_date=today,
+        status=status,
     )
-    session.add(sprint)
+    session.add(cycle)
     session.flush()
-    return sprint
+    return cycle
 
 
 def _create_subtask(
     session: Session,
-    sprint: Sprint,
+    cycle: Cycle,
     *,
     jira_key: str = "TEST-1",
     status: str = "Done",
@@ -87,7 +94,7 @@ def _create_subtask(
         area="BE",
         summary="Test subtask",
         status=status,
-        sprint_id=sprint.id,
+        cycle_id=cycle.id,
         cp=cp,
         complexity_size=complexity_size,
         cp_approved_at=datetime.utcnow() if cp else None,
@@ -119,10 +126,10 @@ class TestRecalculateSubtask:
     def test_basic_recalc_sets_sp_final(self, test_session: Session) -> None:
         _create_engine_version(test_session)
         player = _create_system_player(test_session)
-        sprint = _create_sprint(test_session)
+        cycle = _create_cycle(test_session)
         st = _create_subtask(
             test_session,
-            sprint,
+            cycle,
             jira_key="TEST-10",
             cp=5,
             complexity_size="L",
@@ -145,8 +152,8 @@ class TestRecalculateSubtask:
     def test_recalc_sets_engine_version_id(self, test_session: Session) -> None:
         ev = _create_engine_version(test_session)
         player = _create_system_player(test_session)
-        sprint = _create_sprint(test_session)
-        st = _create_subtask(test_session, sprint, jira_key="TEST-11")
+        cycle = _create_cycle(test_session)
+        st = _create_subtask(test_session, cycle, jira_key="TEST-11")
 
         recalculate_subtask(test_session, "TEST-11", player.id, force=True)
 
@@ -160,10 +167,10 @@ class TestRecalculateSubtask:
         """qa_attempts=4 debe crear un SpAdjustment D03."""
         _create_engine_version(test_session)
         player = _create_system_player(test_session)
-        sprint = _create_sprint(test_session)
+        cycle = _create_cycle(test_session)
         _create_subtask(
             test_session,
-            sprint,
+            cycle,
             jira_key="TEST-12",
             cp=3,
             qa_first_pass=False,
@@ -189,10 +196,10 @@ class TestRecalculateSubtask:
         """Correr recalculate_subtask dos veces → mismo resultado, sin duplicados."""
         _create_engine_version(test_session)
         player = _create_system_player(test_session)
-        sprint = _create_sprint(test_session)
+        cycle = _create_cycle(test_session)
         _create_subtask(
             test_session,
-            sprint,
+            cycle,
             jira_key="TEST-13",
             cp=5,
             qa_first_pass=False,
@@ -221,10 +228,10 @@ class TestRecalculateSubtask:
         """blocked_biz_hours=12 → D10 detectado, penalty en sp_final."""
         _create_engine_version(test_session)
         player = _create_system_player(test_session)
-        sprint = _create_sprint(test_session)
+        cycle = _create_cycle(test_session)
         _create_subtask(
             test_session,
-            sprint,
+            cycle,
             jira_key="TEST-14",
             cp=3,
             blocked_biz_hours=12.0,  # > 8h → D10
@@ -242,10 +249,10 @@ class TestRecalculateSubtask:
         """CP aprobado no debe ser modificado por el recalculator."""
         _create_engine_version(test_session)
         player = _create_system_player(test_session)
-        sprint = _create_sprint(test_session)
+        cycle = _create_cycle(test_session)
         st = _create_subtask(
             test_session,
-            sprint,
+            cycle,
             jira_key="TEST-15",
             cp=5,    # CP aprobado en _create_subtask (si cp is not None)
             complexity_size="L",
@@ -262,10 +269,10 @@ class TestRecalculateSubtask:
         """sp_final nunca puede ser negativo aunque las penalizaciones sean grandes."""
         _create_engine_version(test_session)
         player = _create_system_player(test_session)
-        sprint = _create_sprint(test_session)
+        cycle = _create_cycle(test_session)
         st = _create_subtask(
             test_session,
-            sprint,
+            cycle,
             jira_key="TEST-16",
             cp=1,  # CP mínimo
             qa_first_pass=False,
@@ -278,14 +285,14 @@ class TestRecalculateSubtask:
         assert result.sp_final >= 0.0
 
     @pytest.mark.integration
-    def test_d13_sprint_overflow_detected(self, test_session: Session) -> None:
-        """Sprint cerrado + tarea sin entregar → D13 detectado."""
+    def test_d13_cycle_overflow_detected(self, test_session: Session) -> None:
+        """Ciclo cerrado + tarea sin entregar → D13 detectado."""
         _create_engine_version(test_session)
         player = _create_system_player(test_session)
-        closed_sprint = _create_sprint(test_session, is_closed=True)
+        closed_cycle = _create_cycle(test_session, status="closed")
         _create_subtask(
             test_session,
-            closed_sprint,
+            closed_cycle,
             jira_key="TEST-17",
             status="In Progress",
             cp=3,
@@ -321,17 +328,17 @@ class TestRecalculateSprint:
     ) -> None:
         _create_engine_version(test_session)
         player = _create_system_player(test_session)
-        sprint = _create_sprint(test_session)
+        cycle = _create_cycle(test_session)
 
         for i in range(3):
             _create_subtask(
                 test_session,
-                sprint,
+                cycle,
                 jira_key=f"SPRINT-{i}",
                 cp=3,
             )
 
-        stats = recalculate_sprint(test_session, sprint.id, player.id, force=True)
+        stats = recalculate_cycle(test_session, cycle.id, player.id, force=True)
 
         assert stats["total"] == 3
         assert int(stats["processed"]) == 3
@@ -344,13 +351,13 @@ class TestRecalculateSprint:
         """sp_total debe ser la suma de sp_final de todas las subtasks."""
         _create_engine_version(test_session)
         player = _create_system_player(test_session)
-        sprint = _create_sprint(test_session)
+        cycle = _create_cycle(test_session)
 
         # 2 subtasks, CP=3 cada una, all defaults → sp_final = 3.0 each
-        _create_subtask(test_session, sprint, jira_key="SPSUM-1", cp=3)
-        _create_subtask(test_session, sprint, jira_key="SPSUM-2", cp=3)
+        _create_subtask(test_session, cycle, jira_key="SPSUM-1", cp=3)
+        _create_subtask(test_session, cycle, jira_key="SPSUM-2", cp=3)
 
-        stats = recalculate_sprint(test_session, sprint.id, player.id, force=True)
+        stats = recalculate_cycle(test_session, cycle.id, player.id, force=True)
 
         assert float(stats["sp_total"]) >= 0.0
 
@@ -361,15 +368,15 @@ class TestRecalculateSprint:
         """Sin force=True, subtasks ya calculadas con la versión actual se omiten."""
         ev = _create_engine_version(test_session)
         player = _create_system_player(test_session)
-        sprint = _create_sprint(test_session)
+        cycle = _create_cycle(test_session)
 
-        st = _create_subtask(test_session, sprint, jira_key="SKIP-1", cp=5)
+        st = _create_subtask(test_session, cycle, jira_key="SKIP-1", cp=5)
         # Simular que ya fue calculada con la versión actual
         st.sp_last_calculated_at = datetime.utcnow()
         st.engine_version_id = ev.id
         test_session.flush()
 
-        stats = recalculate_sprint(test_session, sprint.id, player.id, force=False)
+        stats = recalculate_cycle(test_session, cycle.id, player.id, force=False)
 
         assert int(stats["skipped"]) >= 1
 
@@ -380,14 +387,14 @@ class TestRecalculateSprint:
         """Con force=True todas las subtasks se recalculan."""
         ev = _create_engine_version(test_session)
         player = _create_system_player(test_session)
-        sprint = _create_sprint(test_session)
+        cycle = _create_cycle(test_session)
 
-        st = _create_subtask(test_session, sprint, jira_key="FORCE-1", cp=3)
+        st = _create_subtask(test_session, cycle, jira_key="FORCE-1", cp=3)
         st.sp_last_calculated_at = datetime.utcnow()
         st.engine_version_id = ev.id
         test_session.flush()
 
-        stats = recalculate_sprint(test_session, sprint.id, player.id, force=True)
+        stats = recalculate_cycle(test_session, cycle.id, player.id, force=True)
 
         assert int(stats["processed"]) >= 1
         assert int(stats["skipped"]) == 0

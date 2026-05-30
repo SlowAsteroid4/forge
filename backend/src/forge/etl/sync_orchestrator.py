@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from forge.core.config import get_settings
 from forge.core.logging import get_logger
+from forge.db.models.audit_log import AuditLog
 from forge.db.models.cycle import Cycle
 from forge.db.models.epic import Epic
 from forge.db.models.player import Player
@@ -202,10 +203,32 @@ class SyncOrchestrator:
         }
 
         if existing:
-            # No sobrescribir CP si ya está aprobado
-            if existing.cp_approved_at:
-                subtask_data.pop("cp", None)
-                subtask_data.pop("complexity_size", None)
+            # AC-4.7/4.10: no sobrescribir CP si ya está aprobado
+            if existing.cp_approved_at is not None:
+                incoming_cp = subtask_data.pop("cp", None)
+                incoming_size = subtask_data.pop("complexity_size", None)
+                cp_changed = (incoming_cp is not None and incoming_cp != existing.cp) or (
+                    incoming_size is not None and incoming_size != existing.complexity_size
+                )
+                if cp_changed:
+                    existing.cp_modified_post_approval = True
+                    self.session.add(
+                        AuditLog(
+                            event_type="cp_change_attempted_post_approval",
+                            entity_type="subtask",
+                            entity_id=existing.jira_key,
+                            actor_player_id=None,
+                            changes=json.dumps(
+                                {
+                                    "approved_cp": existing.cp,
+                                    "approved_size": existing.complexity_size,
+                                    "jira_cp": incoming_cp,
+                                    "jira_size": incoming_size,
+                                }
+                            ),
+                            timestamp=datetime.utcnow(),
+                        )
+                    )
 
             for k, v in subtask_data.items():
                 setattr(existing, k, v)
@@ -214,7 +237,7 @@ class SyncOrchestrator:
             self.session.add(Subtask(**subtask_data))
             stats["subtasks_created"] += 1
 
-    def _get_player_id(self, assignee: dict | None) -> int | None:
+    def _get_player_id(self, assignee: dict[str, Any] | None) -> int | None:
         """Obtener player ID desde assignee de Jira."""
         if not assignee:
             return None

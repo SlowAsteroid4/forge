@@ -60,6 +60,8 @@ class Subtask(Base):
         comment="REGLA: CP inmutable después de esta fecha"
     )
     cp_approval_required: Mapped[bool] = mapped_column(Boolean, default=False)
+    cp_rejection_reason: Mapped[str | None] = mapped_column(Text)
+    cp_modified_post_approval: Mapped[bool] = mapped_column(Boolean, default=False)
 
     # Tiempos (horas hábiles)
     done_at: Mapped[datetime | None] = mapped_column(index=True)

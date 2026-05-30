@@ -1,6 +1,6 @@
 """SubtaskRepository — acceso a datos de subtasks."""
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from sqlalchemy import func, select
@@ -48,13 +48,39 @@ class SubtaskRepository(BaseRepository[Subtask, str]):
             stmt = stmt.where(Subtask.assignee_player_id == player_id)
         return list(self._session.scalars(stmt))
 
-    def list_pending_cp_approval(self) -> list[Subtask]:
-        """Subtasks L/XL que requieren aprobación de CP pero aún no la tienen."""
+    def list_pending_cp_approval(
+        self,
+        area: str | None = None,
+        player_id: int | None = None,
+        project_code: str | None = None,
+        min_waiting_days: int | None = None,
+    ) -> list[Subtask]:
+        """Subtasks L/XL pendientes de aprobación de CP, con filtros opcionales."""
         stmt = select(Subtask).where(
             Subtask.cp_approval_required.is_(True),
             Subtask.cp_approved_at.is_(None),
         )
+        if area is not None:
+            stmt = stmt.where(Subtask.area == area)
+        if player_id is not None:
+            stmt = stmt.where(Subtask.assignee_player_id == player_id)
+        if project_code is not None:
+            stmt = stmt.where(Subtask.project_code == project_code)
+        if min_waiting_days is not None:
+            cutoff = datetime.utcnow() - timedelta(days=min_waiting_days)
+            stmt = stmt.where(
+                (Subtask.cp_proposed_at <= cutoff) | Subtask.cp_proposed_at.is_(None)
+            )
         return list(self._session.scalars(stmt))
+
+    def list_xxl_detected(self) -> list[Subtask]:
+        """Subtasks con talla XXL (deben dividirse)."""
+        stmt = select(Subtask).where(Subtask.complexity_size == "XXL")
+        return list(self._session.scalars(stmt))
+
+    def get_for_approval(self, jira_key: str) -> Subtask | None:
+        """Subtask con contexto completo para el flujo de aprobación."""
+        return self._session.get(Subtask, jira_key)
 
     def get_cp_sum(self, player_id: int, cycle_id: int | None = None) -> float:
         """Suma de CP de subtasks Done del player (para leaderboard)."""

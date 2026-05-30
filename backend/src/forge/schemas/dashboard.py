@@ -1,4 +1,4 @@
-"""Schemas de respuesta para UC-02: Dashboard del sprint."""
+"""Schemas de respuesta para el dashboard de Forge Ops."""
 
 from datetime import date, datetime
 from typing import Literal
@@ -7,22 +7,22 @@ from pydantic import BaseModel, Field
 
 
 # ──────────────────────────────────────────────
-# Bloques base
+# Cycle blocks
 # ──────────────────────────────────────────────
 
 
-class SprintSummary(BaseModel):
-    """Sprint reducido para el selector de sprints."""
+class CycleSummary(BaseModel):
+    """Ciclo reducido para el selector de ciclos."""
 
     id: int
     name: str
     start_date: date
     end_date: date
-    is_closed: bool
+    status: str
 
 
-class SprintHeader(BaseModel):
-    """Header del sprint con progreso temporal."""
+class CycleHeader(BaseModel):
+    """Header del ciclo con progreso temporal."""
 
     id: int
     name: str
@@ -34,13 +34,13 @@ class SprintHeader(BaseModel):
 
 
 class KPIValue(BaseModel):
-    """Valor de un KPI con comparativa vs sprint anterior."""
+    """Valor de un KPI con comparativa vs ciclo anterior."""
 
     value: float
     previous_value: float | None = None
     delta_pct: float | None = Field(
         default=None,
-        description="Variación porcentual vs sprint anterior (+positivo = mejora)",
+        description="Variación porcentual vs ciclo anterior (+positivo = mejora)",
     )
 
 
@@ -49,12 +49,12 @@ class KPICards(BaseModel):
 
     cp_done: KPIValue
     cp_pending: float = Field(description="CP de subtasks aún no terminadas")
-    sp_total: float = Field(description="SP acumulado en subtasks Done del sprint")
-    bugs_derived: int = Field(description="Cantidad de Bug Sub-tasks en el sprint")
+    sp_total: float = Field(description="SP acumulado en subtasks Done del ciclo")
+    bugs_derived: int = Field(description="Cantidad de Bug Sub-tasks en el ciclo")
 
 
 class AreaProgress(BaseModel):
-    """Progreso de un área técnica en el sprint."""
+    """Progreso de un área técnica en el ciclo."""
 
     area: str
     cp_done: float
@@ -68,15 +68,15 @@ PlayerStatusEnum = Literal["productive", "wip_high", "blocked", "inactive"]
 
 
 class PlayerStatus(BaseModel):
-    """Estado de un developer en el sprint actual."""
+    """Estado de un developer en el ciclo actual."""
 
     player_id: int
     display_name: str
     area: str
     avatar_code: str | None = None
     active_subtasks: int = Field(description="Subtasks no terminadas (no Done/Cancelled)")
-    done_subtasks: int = Field(description="Subtasks Done en el sprint")
-    sp_sprint: float = Field(description="SP acumulado en el sprint")
+    done_subtasks: int = Field(description="Subtasks Done en el ciclo")
+    sp_sprint: float = Field(description="SP acumulado en el ciclo")
     status: PlayerStatusEnum
 
 
@@ -113,14 +113,14 @@ class ProjectSummary(BaseModel):
 
 
 class DashboardResponse(BaseModel):
-    """Respuesta completa del UC-02 dashboard.
+    """Respuesta completa del dashboard Forge Ops.
 
-    Cuando no hay sprint activo, `sprint` es None y `no_sprint_message`
+    Cuando no hay ciclo activo, `cycle` es None y `no_cycle_message`
     indica el motivo. El frontend renderiza el empty state.
     """
 
-    sprint: SprintHeader | None = None
-    no_sprint_message: str | None = None
+    cycle: CycleHeader | None = None
+    no_cycle_message: str | None = None
 
     kpis: KPICards | None = None
     area_progress: list[AreaProgress] = []
@@ -128,7 +128,7 @@ class DashboardResponse(BaseModel):
     alerts: list[AlertItem] = []
 
     available_projects: list[ProjectSummary] = []
-    available_sprints: list[SprintSummary] = []
+    available_cycles: list[CycleSummary] = []
     last_synced_at: datetime | None = Field(
         default=None,
         description="Timestamp del último sync contra Jira",

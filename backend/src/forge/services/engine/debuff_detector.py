@@ -7,7 +7,7 @@ Implementa los debuffs DETECTABLES AUTOMÁTICAMENTE del catálogo JPDS v2.0:
   D04 — Code Review Rechazado Múltiple  (review_rejections >= 2)
   D10 — Bloqueo Sin Resolución Oportuna (blocked_biz_hours > umbral)
   D11 — Tarea Fantasma / Abandonada     (no terminada, > N días hábiles sin avance)
-  D13 — Sprint Overflow                 (sprint cerrado, tarea no entregada)
+  D13 — Cycle Overflow                  (ciclo cerrado, tarea no entregada)
 
 Debuffs que NO se implementan aquí (requieren fuente externa / input manual):
   D02 Bug crítico en producción     → webhook de GitHub
@@ -27,7 +27,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from forge.db.models.sprint import Sprint
+from forge.db.models.cycle import Cycle
 from forge.db.models.subtask import Subtask
 
 # ── Tipo de retorno ────────────────────────────────────────────────────────
@@ -176,28 +176,28 @@ def detect_d11(subtask: Subtask) -> DetectedDebuff | None:
     return None
 
 
-# ── D13: Sprint Overflow ──────────────────────────────────────────────────
+# ── D13: Cycle Overflow ───────────────────────────────────────────────────
 def detect_d13(
     subtask: Subtask,
-    sprint: Sprint | None = None,
+    cycle: Cycle | None = None,
 ) -> DetectedDebuff | None:
     """
-    D13 — Sprint Overflow (Tarea No Entregada Al Cierre Del Sprint).
+    D13 — Cycle Overflow (Tarea No Entregada Al Cierre Del Ciclo).
 
     Trigger:
-      - El sprint asociado está cerrado (sprint.is_closed = True)
+      - El ciclo asociado está cerrado (cycle.status in {'closed', 'archived'})
       - La tarea NO está en estado Done/Cancelled
 
     Penalización: 1.5 SP.
 
     Args:
         subtask: Modelo Subtask cargado.
-        sprint: Modelo Sprint correspondiente (debe pasarse desde el orquestador).
-                Si es None, se omite la detección.
+        cycle: Modelo Cycle correspondiente (debe pasarse desde el orquestador).
+               Si es None, se omite la detección.
     """
-    if sprint is None:
+    if cycle is None:
         return None
-    if not sprint.is_closed:
+    if cycle.status not in ("closed", "archived"):
         return None
 
     _terminal = {"Done", "Cancelled", "Cerrado", "Cancelado"}
@@ -208,7 +208,7 @@ def detect_d13(
         catalog_code="D13",
         amount_sp=_D13_PENALTY,
         reason=(
-            f"Sprint Overflow: el sprint '{sprint.name}' cerró con la tarea "
+            f"Cycle Overflow: el ciclo '{cycle.name}' cerró con la tarea "
             f"en estado '{subtask.status}' (sin completar). "
             f"Penalización: {_D13_PENALTY} SP."
         ),
@@ -220,14 +220,16 @@ def detect_d13(
 
 def detect_all(
     subtask: Subtask,
-    sprint: Sprint | None = None,
+    cycle: Cycle | None = None,
+    # sprint kept for backwards-compat but ignored (WP-01b migration)
+    sprint: object | None = None,
 ) -> list[DetectedDebuff]:
     """
     Ejecutar todos los detectores automáticos y retornar la lista de debuffs.
 
     Args:
         subtask: Modelo Subtask con todos sus campos calculados y al día.
-        sprint: Modelo Sprint (necesario para D13). Puede ser None.
+        cycle: Modelo Cycle (necesario para D13). Puede ser None.
 
     Returns:
         Lista de DetectedDebuff (vacía si ninguno aplica).
@@ -242,7 +244,7 @@ def detect_all(
         lambda: detect_d04(subtask),
         lambda: detect_d10(subtask),
         lambda: detect_d11(subtask),
-        lambda: detect_d13(subtask, sprint),
+        lambda: detect_d13(subtask, cycle),
     ]
 
     for detector in detectors:

@@ -11,7 +11,11 @@ from forge.services.engine.cp_calculator import (
     validate_immutability,
 )
 from forge.services.engine.debuff_detector import DetectedDebuff, detect_all
-from forge.services.engine.engine_orchestrator import recalculate_sprint, recalculate_subtask
+from forge.services.engine.engine_orchestrator import (
+    recalculate_cycle,
+    recalculate_sprint,  # DEPRECATED: usar recalculate_cycle
+    recalculate_subtask,
+)
 from forge.services.engine.multiplier_calculator import (
     calc_all_multipliers,
     calc_m_calidad,
@@ -51,5 +55,6 @@ __all__ = [
     "needs_recalculation",
     # Orchestrator
     "recalculate_subtask",
-    "recalculate_sprint",
+    "recalculate_cycle",
+    "recalculate_sprint",  # DEPRECATED
 ]

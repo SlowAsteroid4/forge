@@ -32,9 +32,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from forge.core.exceptions import NotFoundError
+from forge.db.models.cycle import Cycle
 from forge.db.models.engine_version import EngineVersion
 from forge.db.models.sp_adjustment import SpAdjustment
-from forge.db.models.sprint import Sprint
 from forge.db.models.subtask import Subtask
 from forge.services.engine.debuff_detector import DetectedDebuff, detect_all
 from forge.services.engine.sp_calculator import SpComponents, calculate_sp, needs_recalculation
@@ -82,20 +82,20 @@ def recalculate_subtask(
         logger.debug(f"Subtask {subtask_key}: ya calculada con versión actual, omitiendo.")
         return _build_components_from_subtask(subtask)
 
-    # 4. Cargar sprint asociado
-    sprint: Sprint | None = None
-    if subtask.sprint_id:
-        sprint = session.get(Sprint, subtask.sprint_id)
+    # 4. Cargar ciclo asociado (usado por D13)
+    cycle: Cycle | None = None
+    if subtask.cycle_id:
+        cycle = session.get(Cycle, subtask.cycle_id)
 
     # 5. Recomputar métricas de tiempo desde raw_changelog
     time_metrics = recompute_time_metrics(subtask)
     _apply_time_metrics(subtask, time_metrics)
 
     # 6. Detectar debuffs automáticos
-    debuffs = detect_all(subtask, sprint=sprint)
+    debuffs = detect_all(subtask, cycle=cycle)
 
-    # 7. Persistir debuffs nuevos (idempotente)
-    _persist_debuffs(session, subtask_key, debuffs, system_player_id)
+    # 7. Persistir debuffs nuevos (idempotente), vinculados al ciclo
+    _persist_debuffs(session, subtask_key, debuffs, system_player_id, cycle_id=subtask.cycle_id)
 
     # 8. Sumar todos los SpAdjustments vigentes
     sp_flat_bonus, sp_penalty = _sum_adjustments(session, subtask_key)
@@ -125,25 +125,25 @@ def recalculate_subtask(
     return components
 
 
-# ── Recalculo de sprint completo ──────────────────────────────────────────
+# ── Recalculo de ciclo completo ───────────────────────────────────────────
 
 
-def recalculate_sprint(
+def recalculate_cycle(
     session: Session,
-    sprint_id: int,
+    cycle_id: int,
     system_player_id: int,
     *,
     force: bool = False,
 ) -> dict[str, int | float]:
     """
-    Recalcular SP para todas las subtasks de un sprint.
+    Recalcular SP para todas las subtasks de un ciclo.
 
     Commits SOLO al finalizar todas las subtasks (transacción única).
     Si una subtask falla, se registra el error pero se continúa con las demás.
 
     Args:
         session: Sesión SQLAlchemy activa (NO hace commit; lo hace el llamador).
-        sprint_id: ID del sprint a recalcular.
+        cycle_id: ID del ciclo a recalcular.
         system_player_id: Player que actúa como sistema para SpAdjustments.
         force: Si True, recalcula todas aunque la versión no haya cambiado.
 
@@ -151,19 +151,19 @@ def recalculate_sprint(
         Dict con estadísticas: processed, skipped, errors.
 
     Raises:
-        NotFoundError: Si el sprint no existe.
+        NotFoundError: Si el ciclo no existe.
     """
-    sprint = session.get(Sprint, sprint_id)
-    if sprint is None:
-        raise NotFoundError(f"Sprint id={sprint_id} no encontrado.")
+    cycle = session.get(Cycle, cycle_id)
+    if cycle is None:
+        raise NotFoundError(f"Cycle id={cycle_id} no encontrado.")
 
     subtask_keys_result = session.execute(
-        select(Subtask.jira_key).where(Subtask.sprint_id == sprint_id)
+        select(Subtask.jira_key).where(Subtask.cycle_id == cycle_id)
     )
     keys = [row[0] for row in subtask_keys_result]
 
     stats: dict[str, int | float] = {
-        "sprint_id": sprint_id,
+        "cycle_id": cycle_id,
         "total": len(keys),
         "processed": 0,
         "skipped": 0,
@@ -196,11 +196,29 @@ def recalculate_sprint(
             logger.error(f"Error recalculando {key}: {exc}")
 
     logger.info(
-        f"recalculate_sprint id={sprint_id}: "
+        f"recalculate_cycle id={cycle_id}: "
         f"{stats['processed']} procesadas, {stats['skipped']} omitidas, "
         f"{stats['errors']} errores. SP total={stats['sp_total']:.2f}"
     )
     return stats
+
+
+def recalculate_sprint(
+    session: Session,
+    sprint_id: int,
+    system_player_id: int,
+    *,
+    force: bool = False,
+) -> dict[str, int | float]:
+    """DEPRECATED (WP-01b): usar recalculate_cycle en su lugar.
+
+    Alias que delega a recalculate_cycle usando cycle_id = sprint_id.
+    Se mantiene para compatibilidad con CLI legado.
+    """
+    logger.warning(
+        "recalculate_sprint is deprecated; use recalculate_cycle (cycle_id) instead."
+    )
+    return recalculate_cycle(session, sprint_id, system_player_id, force=force)
 
 
 # ── Helpers privados ──────────────────────────────────────────────────────
@@ -245,6 +263,7 @@ def _persist_debuffs(
     subtask_key: str,
     debuffs: list[DetectedDebuff],
     system_player_id: int,
+    cycle_id: int | None = None,
 ) -> int:
     """
     Persistir debuffs detectados como SpAdjustments (idempotente).
@@ -281,6 +300,7 @@ def _persist_debuffs(
             reason=debuff.reason,
             applied_by=system_player_id,
             applied_at=datetime.utcnow(),
+            cycle_id=cycle_id,
         )
         session.add(adjustment)
         existing_codes.add(debuff.catalog_code)  # Evitar duplicados en el mismo batch

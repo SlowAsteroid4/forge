@@ -27,3 +27,6 @@ class SpAdjustment(Base):
         Integer, ForeignKey("players.id", ondelete="RESTRICT"), nullable=False
     )
     applied_at: Mapped[datetime] = mapped_column(nullable=False, default=datetime.utcnow)
+    cycle_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("cycles.id", ondelete="SET NULL"), index=True
+    )

@@ -10,9 +10,9 @@ from sqlalchemy.orm import Session
 
 from forge.core.config import get_settings
 from forge.core.logging import get_logger
+from forge.db.models.cycle import Cycle
 from forge.db.models.epic import Epic
 from forge.db.models.player import Player
-from forge.db.models.sprint import Sprint
 from forge.db.models.story import Story
 from forge.db.models.subtask import Subtask
 from forge.etl.jira_client import JiraClient
@@ -183,10 +183,7 @@ class SyncOrchestrator:
 
         # done_at viene de time_metrics (resolutiondate o última transición a Done)
         done_at: datetime | None = time_metrics.get("done_at")  # type: ignore[assignment]
-        sprint_id = self._get_sprint_id(
-            jira_sprint_field=fields.get("customfield_10020"),
-            done_at=done_at,
-        )
+        cycle_id = self._get_cycle_id(done_at=done_at)
 
         subtask_data = {
             "jira_key": key,
@@ -197,7 +194,7 @@ class SyncOrchestrator:
             "summary": fields.get("summary", ""),
             "status": fields.get("status", {}).get("name", "Unknown"),
             "assignee_player_id": assignee_id,
-            "sprint_id": sprint_id,
+            "cycle_id": cycle_id,
             "last_synced_at": datetime.utcnow(),
             "raw_changelog": json.dumps(issue.get("changelog", {})),
             **time_metrics,
@@ -234,39 +231,25 @@ class SyncOrchestrator:
         player = self.session.get(Player, player_id)
         return player.area if player else "BE"
 
-    def _get_sprint_id(
-        self,
-        jira_sprint_field: list[dict] | None,
-        done_at: datetime | None,
-    ) -> int | None:
+    def _get_cycle_id(self, done_at: datetime | None) -> int | None:
         """
-        Obtener sprint_id local que corresponde a este subtask.
+        Obtener cycle_id local que corresponde a este subtask.
 
-        Estrategia:
-        1. Si Jira devuelve el campo sprint (customfield_10020), intentar
-           emparejar por nombre exacto con los sprints locales.
-        2. Fallback: fecha-match — usar done_at (si existe) o hoy para
-           encontrar qué sprint cubre ese día por rango de fechas.
+        Estrategia: fecha-match — usar done_at (si existe) o hoy para
+        encontrar qué ciclo cubre ese día por rango de fechas.
+        Si no hay ciclo en rango (subtask muy antigua), retorna None y loguea.
         """
-        # 1. Intentar match por nombre desde el campo Jira
-        if jira_sprint_field:
-            for sprint_obj in jira_sprint_field:
-                jira_sprint_name: str | None = sprint_obj.get("name")
-                if jira_sprint_name:
-                    stmt = select(Sprint.id).where(Sprint.name == jira_sprint_name).limit(1)
-                    sprint_id = self.session.execute(stmt).scalar_one_or_none()
-                    if sprint_id:
-                        return sprint_id
-
-        # 2. Fallback: date-range match
         ref_date = done_at.date() if done_at else date_type.today()
         stmt = (
-            select(Sprint.id)
-            .where(Sprint.start_date <= ref_date)
-            .where(Sprint.end_date >= ref_date)
+            select(Cycle.id)
+            .where(Cycle.start_date <= ref_date)
+            .where(Cycle.end_date >= ref_date)
             .limit(1)
         )
-        return self.session.execute(stmt).scalar_one_or_none()
+        cycle_id = self.session.execute(stmt).scalar_one_or_none()
+        if cycle_id is None:
+            logger.debug(f"No cycle found for date {ref_date}; cycle_id will be NULL.")
+        return cycle_id
 
     def _parse_datetime(self, date_str: str | None) -> datetime | None:
         """Parsear fecha de Jira."""

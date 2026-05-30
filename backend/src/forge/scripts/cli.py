@@ -10,9 +10,10 @@ from rich.console import Console
 from rich.table import Table
 
 from forge.core.config import get_settings
+from forge.db.models.cycle import Cycle
 from forge.db.models.player import Player
 from forge.db.models.project import Project
-from forge.db.models.sprint import Sprint
+from forge.db.models.sprint import Sprint  # DEPRECATED: solo para compatibilidad seed
 from forge.db.session import SessionLocal
 from forge.etl.jira_client import JiraClient
 from forge.etl.sync_orchestrator import SyncOrchestrator
@@ -260,42 +261,34 @@ def _seed_engine_versions(session, now: datetime, totals: dict) -> None:
 
 @app.command()
 def recalc(
-    sprint_id: int = typer.Option(None, help="Recalcular solo este sprint (default: activo)"),
+    cycle_id: int = typer.Option(None, help="Recalcular solo este ciclo (default: activo)"),
     force: bool = typer.Option(False, help="Forzar recálculo aunque engine_version no cambió"),
     system_player: str = typer.Option(
         "PM", help="Área del player que actúa como sistema para auto-debuffs"
     ),
 ):
-    """Recalcular SP de todas las subtasks de un sprint (CP×multiplicadores + debuffs)."""
+    """Recalcular SP de todas las subtasks de un ciclo (CP×multiplicadores + debuffs)."""
     from sqlalchemy import select
-    from datetime import date as _date
-
-    from forge.services.engine import recalculate_sprint
+    from forge.services.engine import recalculate_cycle
 
     console.print("[bold blue]⚙️  Recalculando motor JPDS v2.0...[/bold blue]")
     session = SessionLocal()
     try:
-        # Resolver sprint
-        if sprint_id is None:
-            stmt = (
-                select(Sprint)
-                .where(Sprint.is_closed.is_(False))
-                .where(Sprint.start_date <= _date.today())
-                .where(Sprint.end_date >= _date.today())
-                .limit(1)
-            )
-            sprint = session.scalars(stmt).first()
-            if sprint is None:
-                console.print("[red]❌ No hay sprint activo y no se pasó --sprint-id[/red]")
+        # Resolver ciclo
+        if cycle_id is None:
+            stmt = select(Cycle).where(Cycle.status == "active").limit(1)
+            cycle = session.scalars(stmt).first()
+            if cycle is None:
+                console.print("[red]❌ No hay ciclo activo y no se pasó --cycle-id[/red]")
                 raise typer.Exit(1)
-            sprint_id = sprint.id
-            console.print(f"  Sprint activo detectado: [cyan]{sprint.name}[/cyan] (id={sprint_id})")
+            cycle_id = cycle.id
+            console.print(f"  Ciclo activo detectado: [cyan]{cycle.name}[/cyan] (id={cycle_id})")
         else:
-            sprint = session.get(Sprint, sprint_id)
-            if sprint is None:
-                console.print(f"[red]❌ Sprint id={sprint_id} no encontrado[/red]")
+            cycle = session.get(Cycle, cycle_id)
+            if cycle is None:
+                console.print(f"[red]❌ Cycle id={cycle_id} no encontrado[/red]")
                 raise typer.Exit(1)
-            console.print(f"  Sprint: [cyan]{sprint.name}[/cyan]")
+            console.print(f"  Ciclo: [cyan]{cycle.name}[/cyan]")
 
         # Resolver system_player (necesario para applied_by en SpAdjustments)
         stmt = select(Player).where(Player.area == system_player).limit(1)
@@ -308,11 +301,11 @@ def recalc(
         console.print()
 
         # Ejecutar
-        stats = recalculate_sprint(session, sprint_id, system_p.id, force=force)
+        stats = recalculate_cycle(session, cycle_id, system_p.id, force=force)
         session.commit()
 
         # Mostrar resultados
-        table = Table(title=f"Recalc Engine — Sprint {sprint.name}")
+        table = Table(title=f"Recalc Engine — {cycle.name}")
         table.add_column("Métrica", style="cyan")
         table.add_column("Valor", style="white", justify="right")
         table.add_row("Total subtasks", str(stats["total"]))
@@ -334,7 +327,7 @@ def recalc(
 @app.command()
 def engine_demo(
     sample_size: int = typer.Option(10, help="Cuántas subtasks de ejemplo asignar"),
-    sprint_id: int = typer.Option(None, help="Sprint a samplear (default: activo)"),
+    cycle_id: int = typer.Option(None, help="Ciclo a samplear (default: activo)"),
     dry_run: bool = typer.Option(False, help="No persiste cambios, solo simula"),
 ):
     """
@@ -364,27 +357,21 @@ def engine_demo(
     console.print("[bold blue]🧪 Engine Demo — asignación de tallas + recálculo[/bold blue]")
     session = SessionLocal()
     try:
-        # Resolver sprint
-        if sprint_id is None:
-            stmt = (
-                select(Sprint)
-                .where(Sprint.is_closed.is_(False))
-                .where(Sprint.start_date <= _date.today())
-                .where(Sprint.end_date >= _date.today())
-                .limit(1)
-            )
-            sprint = session.scalars(stmt).first()
-            if sprint is None:
-                console.print("[red]❌ No hay sprint activo[/red]")
+        # Resolver ciclo
+        if cycle_id is None:
+            stmt = select(Cycle).where(Cycle.status == "active").limit(1)
+            cycle = session.scalars(stmt).first()
+            if cycle is None:
+                console.print("[red]❌ No hay ciclo activo[/red]")
                 raise typer.Exit(1)
-            sprint_id = sprint.id
+            cycle_id = cycle.id
 
-        # Sample subtasks del sprint
+        # Sample subtasks del ciclo
         from forge.db.models.subtask import Subtask
 
         stmt = (
             select(Subtask)
-            .where(Subtask.sprint_id == sprint_id)
+            .where(Subtask.cycle_id == cycle_id)
             .where(Subtask.status == "Done")
             .where(Subtask.assignee_player_id.isnot(None))
             .limit(sample_size)
@@ -517,20 +504,20 @@ def engine_demo(
 
 
 @app.command()
-def sprint_generate(
-    weeks: int = typer.Option(12, help="Cantidad de sprints a generar hacia adelante"),
+def cycle_generate(
+    weeks: int = typer.Option(12, help="Cantidad de ciclos a generar hacia adelante"),
     start: str = typer.Option(
         None,
-        help="Fecha de inicio del primer sprint (YYYY-MM-DD, debe ser lunes). "
-        "Por defecto: lunes de la semana siguiente al último sprint registrado (o hoy).",
+        help="Fecha de inicio del primer ciclo (YYYY-MM-DD, debe ser lunes). "
+        "Por defecto: lunes de la semana siguiente al último ciclo registrado (o hoy).",
     ),
     dry_run: bool = typer.Option(False, help="Mostrar sin persistir"),
 ):
-    """Generar sprints semanales (lunes a domingo) con nombre Sprint YYYY-WWW."""
+    """Generar ciclos semanales (lunes a viernes) con nombre Ciclo YYYY-WWW. Idempotente."""
     from datetime import date as _date, timedelta
     from sqlalchemy import select, func
 
-    console.print(f"[bold blue]📅 Generando {weeks} sprints semanales...[/bold blue]")
+    console.print(f"[bold blue]📅 Generando {weeks} ciclos semanales...[/bold blue]")
     session = SessionLocal()
     try:
         # Determinar fecha de inicio
@@ -540,33 +527,30 @@ def sprint_generate(
                 console.print("[red]❌ La fecha de inicio debe ser un lunes (weekday=0)[/red]")
                 raise typer.Exit(1)
         else:
-            # Buscar el último sprint existente y arrancar la semana siguiente
-            last_end = session.scalar(select(func.max(Sprint.end_date)))
+            # Buscar el último ciclo y arrancar la semana siguiente
+            last_end = session.scalar(select(func.max(Cycle.end_date)))
             if last_end:
-                # Siguiente lunes después del último sprint
-                first_start = last_end + timedelta(days=1)
-                # Avanzar hasta el lunes si no cae en lunes (por si hay gaps)
+                first_start = last_end + timedelta(days=3)  # lunes siguiente (fin = viernes)
                 while first_start.weekday() != 0:
                     first_start += timedelta(days=1)
             else:
-                # Sin sprints: empezar desde el lunes de esta semana
                 today = _date.today()
                 first_start = today - timedelta(days=today.weekday())
 
-        table = Table(title="Sprints a crear")
+        table = Table(title="Ciclos a crear")
         table.add_column("Nombre", style="cyan")
         table.add_column("Inicio", style="white")
-        table.add_column("Fin", style="white")
+        table.add_column("Fin (Vie)", style="white")
         table.add_column("Estado", style="yellow")
 
         created = skipped = 0
         current = first_start
         for _ in range(weeks):
-            end = current + timedelta(days=6)
+            end = current + timedelta(days=4)  # lunes → viernes (5 días)
             iso_year, iso_week, _ = current.isocalendar()
-            name = f"Sprint {iso_year}-W{iso_week:02d}"
+            name = f"Ciclo {iso_year}-W{iso_week:02d}"
 
-            stmt = select(Sprint).where(Sprint.name == name)
+            stmt = select(Cycle).where(Cycle.iso_year == iso_year, Cycle.iso_week == iso_week)
             existing = session.scalars(stmt).first()
 
             if existing:
@@ -575,15 +559,14 @@ def sprint_generate(
             else:
                 table.add_row(name, str(current), str(end), "✅ nuevo")
                 if not dry_run:
-                    now = datetime.utcnow()
                     session.add(
-                        Sprint(
+                        Cycle(
                             name=name,
+                            iso_year=iso_year,
+                            iso_week=iso_week,
                             start_date=current,
                             end_date=end,
-                            is_closed=False,
-                            created_at=now,
-                            updated_at=now,
+                            status="planned",
                         )
                     )
                 created += 1
@@ -609,19 +592,61 @@ def sprint_generate(
 
 
 @app.command()
+def cycles_list(
+    limit: int = typer.Option(10, help="Número de ciclos a mostrar"),
+):
+    """Listar ciclos recientes."""
+    from sqlalchemy import select
+
+    session = SessionLocal()
+    try:
+        stmt = select(Cycle).order_by(Cycle.start_date.desc()).limit(limit)
+        cycles = list(session.scalars(stmt))
+
+        table = Table(title=f"Ciclos recientes (últimos {limit})")
+        table.add_column("ID", style="dim")
+        table.add_column("Nombre", style="cyan")
+        table.add_column("Inicio", style="white")
+        table.add_column("Fin", style="white")
+        table.add_column("Status", style="yellow")
+
+        for c in cycles:
+            table.add_row(str(c.id), c.name, str(c.start_date), str(c.end_date), c.status)
+
+        console.print(table)
+    finally:
+        session.close()
+
+
+@app.command()
+def sprint_generate(
+    weeks: int = typer.Option(12, help="[DEPRECATED] Usar cycle-generate"),
+    start: str = typer.Option(None),
+    dry_run: bool = typer.Option(False),
+):
+    """[DEPRECATED] Alias de cycle-generate. Usar forge cycle-generate en su lugar."""
+    console.print("[yellow]⚠ sprint-generate está deprecado. Usa forge cycle-generate[/yellow]")
+    from click import Context
+    ctx = typer.get_current_context()
+    ctx.invoke(cycle_generate, weeks=weeks, start=start, dry_run=dry_run)
+
+
+@app.command()
 def shell():
     """Abrir IPython con sesión de DB cargada."""
     try:
         import IPython
 
+        from forge.db.models.subtask import Subtask
         session = SessionLocal()
         console.print("[bold green]Shell Forge — sesión DB disponible como `session`[/bold green]")
         IPython.embed(
-            header="Forge Shell\nVariables: session, Player, Sprint, Subtask, Project",
+            header="Forge Shell\nVariables: session, Player, Cycle, Subtask, Project",
             user_ns={
                 "session": session,
                 "Player": Player,
-                "Sprint": Sprint,
+                "Cycle": Cycle,
+                "Subtask": Subtask,
                 "Project": Project,
             },
         )

@@ -8,23 +8,23 @@ import { AlertsPanel } from "@/components/ops/alerts-panel";
 import { Progress } from "@/components/ui/progress";
 
 interface PageProps {
-  searchParams: Promise<{ project?: string; sprint_id?: string }>;
+  searchParams: Promise<{ project?: string; cycle_id?: string }>;
 }
 
-async function getDashboard(projectCode?: string, sprintId?: string): Promise<DashboardResponse | null> {
+async function getDashboard(projectCode?: string, cycleId?: string): Promise<DashboardResponse | null> {
   const params = new URLSearchParams();
   if (projectCode) params.set("project_code", projectCode);
-  if (sprintId) params.set("sprint_id", sprintId);
+  if (cycleId) params.set("cycle_id", cycleId);
   const query = params.toString() ? `?${params}` : "";
-  return api.get<DashboardResponse>(`/dashboard/sprint${query}`).catch(() => null);
+  return api.get<DashboardResponse>(`/dashboard/cycle${query}`).catch(() => null);
 }
 
 export default async function DashboardPage({ searchParams }: PageProps) {
-  const { project, sprint_id } = await searchParams;
-  const dashboard = await getDashboard(project, sprint_id);
+  const { project, cycle_id } = await searchParams;
+  const dashboard = await getDashboard(project, cycle_id);
 
-  const sprint = dashboard?.sprint ?? null;
-  const noData = !dashboard || !sprint;
+  const cycle = dashboard?.cycle ?? null;
+  const noData = !dashboard || !cycle;
 
   return (
     <div className="flex flex-col flex-1 overflow-auto">
@@ -37,23 +37,23 @@ export default async function DashboardPage({ searchParams }: PageProps) {
         {noData ? (
           <div className="rounded-lg border border-dashed border-border p-8 text-center">
             <p className="text-sm text-muted-foreground">
-              {dashboard?.no_sprint_message ?? "No hay sprint activo. Crea uno para comenzar."}
+              {dashboard?.no_cycle_message ?? "No hay ciclo activo. Crea uno para comenzar."}
             </p>
           </div>
         ) : (
           <>
-            {/* Sprint banner */}
+            {/* Ciclo banner */}
             <div className="rounded-lg border border-border bg-card p-4 space-y-2">
               <div className="flex items-center justify-between">
                 <div>
-                  <h2 className="text-base font-semibold">{sprint.name}</h2>
+                  <h2 className="text-base font-semibold">{cycle.name}</h2>
                   <p className="text-xs text-muted-foreground">
-                    {new Date(sprint.start_date).toLocaleDateString("es-MX", {
+                    {new Date(cycle.start_date).toLocaleDateString("es-MX", {
                       day: "numeric",
                       month: "short",
                     })}{" "}
                     —{" "}
-                    {new Date(sprint.end_date).toLocaleDateString("es-MX", {
+                    {new Date(cycle.end_date).toLocaleDateString("es-MX", {
                       day: "numeric",
                       month: "short",
                       year: "numeric",
@@ -61,10 +61,10 @@ export default async function DashboardPage({ searchParams }: PageProps) {
                   </p>
                 </div>
                 <span className="text-sm text-muted-foreground tabular-nums">
-                  {sprint.days_elapsed} de {sprint.days_total} días
+                  {cycle.days_elapsed} de {cycle.days_total} días
                 </span>
               </div>
-              <Progress value={sprint.progress_pct} className="h-2" />
+              <Progress value={cycle.progress_pct} className="h-2" />
             </div>
 
             {/* KPI cards */}
@@ -81,7 +81,7 @@ export default async function DashboardPage({ searchParams }: PageProps) {
               {dashboard.area_progress.length > 0 ? (
                 <AreaProgressGrid areas={dashboard.area_progress} />
               ) : (
-                <p className="text-sm text-muted-foreground">Sin datos de área en este sprint.</p>
+                <p className="text-sm text-muted-foreground">Sin datos de área en este ciclo.</p>
               )}
             </section>
 

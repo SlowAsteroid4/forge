@@ -1,4 +1,4 @@
-.PHONY: dev db-init db-reset seed sync test test-unit test-cov test-jira recalc shell lint format typecheck sprint-generate
+.PHONY: dev db-init db-reset seed sync test test-unit test-cov test-jira recalc shell lint format typecheck cycle-generate cycles-list sprint-generate
 
 dev:
 	uv run uvicorn forge.main:app --reload --port 8000
@@ -30,8 +30,15 @@ test-jira:
 recalc:
 	uv run forge recalc
 
+cycle-generate:
+	uv run forge cycle-generate
+
+cycles-list:
+	uv run forge cycles-list
+
 sprint-generate:
-	uv run forge sprint-generate
+	@echo "DEPRECATED: usar make cycle-generate"
+	uv run forge cycle-generate
 
 shell:
 	uv run forge shell

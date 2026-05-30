@@ -1,4 +1,8 @@
-"""SprintRepository — acceso a datos de sprints."""
+"""SprintRepository — acceso a datos de sprints.
+
+DEPRECATED (WP-01b): usar CycleRepository. Esta clase se mantiene solo para
+compatibilidad con código legado; no agregar nuevas funcionalidades aquí.
+"""
 
 from datetime import date, datetime
 

@@ -40,7 +40,7 @@ const navSections: NavSection[] = [
     title: "Dashboard",
     items: [
       {
-        label: "Sprint actual",
+        label: "Ciclo actual",
         href: "/dashboard",
         icon: <LayoutDashboard size={16} />,
       },

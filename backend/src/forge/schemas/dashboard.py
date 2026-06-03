@@ -44,23 +44,27 @@ class KPIValue(BaseModel):
     )
 
 
+class QAFirstPass(BaseModel):
+    """Tasa de QA first-pass del ciclo."""
+
+    rate: float = Field(ge=0, le=1, description="Proporción 0-1 de subtasks Done que pasaron QA al primer intento")
+    passed: int = Field(description="Subtasks que pasaron QA al primer intento")
+    total: int = Field(description="Subtasks Done con dato de qa_first_pass")
+
+
 class KPICards(BaseModel):
-    """4 KPI cards principales del dashboard."""
+    """KPI cards del dashboard de ciclo."""
 
     cp_done: KPIValue
-    cp_pending: float = Field(description="CP de subtasks aún no terminadas")
-    sp_total: float = Field(description="SP acumulado en subtasks Done del ciclo")
-    bugs_derived: int = Field(description="Cantidad de Bug Sub-tasks en el ciclo")
+    qa_first_pass: QAFirstPass
 
 
 class AreaProgress(BaseModel):
-    """Progreso de un área técnica en el ciclo."""
+    """Throughput de un área técnica en el ciclo."""
 
     area: str
-    cp_done: float
-    cp_total: float
-    progress_pct: float = Field(ge=0, le=100)
-    active_devs: int = Field(description="Devs con al menos 1 subtask activa")
+    cp_done: float = Field(description="CP completados en el ciclo por esta área")
+    active_devs: int = Field(description="Devs con WIP activo ahora en esta área")
     has_wip_bottleneck: bool = Field(description="Algún dev del área excede el WIP máximo")
 
 
@@ -68,15 +72,14 @@ PlayerStatusEnum = Literal["productive", "wip_high", "blocked", "inactive"]
 
 
 class PlayerStatus(BaseModel):
-    """Estado de un developer en el ciclo actual."""
+    """Estado de un developer — WIP en vivo + done del ciclo."""
 
     player_id: int
     display_name: str
     area: str
     avatar_code: str | None = None
-    active_subtasks: int = Field(description="Subtasks no terminadas (no Done/Cancelled)")
-    done_subtasks: int = Field(description="Subtasks Done en el ciclo")
-    sp_sprint: float = Field(description="SP acumulado en el ciclo")
+    wip_live: int = Field(description="Subtasks activas ahora (no Done/Cancelled), sin filtro de ciclo")
+    done_subtasks: int = Field(description="Subtasks Done en el ciclo actual")
     status: PlayerStatusEnum
 
 

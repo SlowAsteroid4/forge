@@ -14,11 +14,15 @@ export interface KpiValueFull {
   delta_pct?: number | null;
 }
 
+export interface QAFirstPass {
+  rate: number;
+  passed: number;
+  total: number;
+}
+
 export interface DashboardKpis {
   cp_done: KpiValueFull;
-  cp_pending: number;
-  sp_total: number;
-  bugs_derived: number;
+  qa_first_pass: QAFirstPass;
 }
 
 export type DevStatus = "productive" | "wip_high" | "blocked" | "inactive";
@@ -26,8 +30,6 @@ export type DevStatus = "productive" | "wip_high" | "blocked" | "inactive";
 export interface AreaProgress {
   area: string;
   cp_done: number;
-  cp_total: number;
-  progress_pct: number;
   active_devs: number;
   has_wip_bottleneck: boolean;
 }
@@ -37,9 +39,8 @@ export interface PlayerStatus {
   display_name: string;
   avatar_code: string | null;
   area: string;
-  active_subtasks: number;
+  wip_live: number;
   done_subtasks: number;
-  sp_sprint: number;
   status: DevStatus;
 }
 

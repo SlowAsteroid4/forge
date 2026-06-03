@@ -33,7 +33,7 @@ export function DevTable({ players }: DevTableProps) {
   if (players.length === 0) {
     return (
       <p className="text-sm text-muted-foreground py-4 text-center">
-        No hay devs activos en este sprint.
+        No hay devs activos en el equipo.
       </p>
     );
   }
@@ -44,9 +44,8 @@ export function DevTable({ players }: DevTableProps) {
         <TableRow>
           <TableHead>Dev</TableHead>
           <TableHead>Área</TableHead>
-          <TableHead className="text-center">Activas</TableHead>
-          <TableHead className="text-center">Done</TableHead>
-          <TableHead className="text-right">SP</TableHead>
+          <TableHead className="text-center">WIP actual</TableHead>
+          <TableHead className="text-center">Done ciclo</TableHead>
           <TableHead>Estado</TableHead>
         </TableRow>
       </TableHeader>
@@ -59,11 +58,8 @@ export function DevTable({ players }: DevTableProps) {
               <TableCell className="text-sm text-muted-foreground">
                 {AREA_LABELS[p.area] ?? p.area}
               </TableCell>
-              <TableCell className="text-center tabular-nums text-sm">{p.active_subtasks}</TableCell>
+              <TableCell className="text-center tabular-nums text-sm">{p.wip_live}</TableCell>
               <TableCell className="text-center tabular-nums text-sm">{p.done_subtasks}</TableCell>
-              <TableCell className="text-right tabular-nums text-sm font-medium">
-                {p.sp_sprint.toFixed(1)}
-              </TableCell>
               <TableCell>
                 <span className="text-xs">
                   {statusCfg.emoji} {statusCfg.label}

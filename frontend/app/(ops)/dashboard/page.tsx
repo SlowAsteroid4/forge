@@ -7,6 +7,7 @@ import { AreaProgressGrid } from "@/components/ops/area-progress";
 import { DevTable } from "@/components/ops/dev-table";
 import { AlertsPanel } from "@/components/ops/alerts-panel";
 import { Progress } from "@/components/ui/progress";
+import { Badge } from "@/components/ui/badge";
 
 interface PageProps {
   searchParams: Promise<{ project?: string; cycle_id?: string }>;
@@ -71,7 +72,7 @@ export default async function DashboardPage({ searchParams }: PageProps) {
                     </Link>
                   )}
                   <span className="text-sm text-muted-foreground tabular-nums">
-                    {cycle.days_elapsed} de {cycle.days_total} días
+                    Día {cycle.days_elapsed} de {cycle.days_total} (ciclo)
                   </span>
                 </div>
               </div>
@@ -79,16 +80,31 @@ export default async function DashboardPage({ searchParams }: PageProps) {
             </div>
 
             {/* KPI cards */}
-            <div className="grid grid-cols-4 gap-3">
-              <KpiCard title="CP Done" value={dashboard.kpis.cp_done} />
-              <KpiCard title="CP Pendientes" value={dashboard.kpis.cp_pending} />
-              <KpiCard title="SP Totales" value={dashboard.kpis.sp_total} decimals={1} />
-              <KpiCard title="Bugs Derivados" value={dashboard.kpis.bugs_derived} invertDelta />
+            <div className="grid grid-cols-2 gap-3">
+              <KpiCard title="CP completados esta semana" value={dashboard.kpis.cp_done} />
+              <div className="rounded-lg border border-border bg-card p-4">
+                <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-1">
+                  QA First-pass
+                </p>
+                <div className="flex items-end gap-2">
+                  <span className="text-3xl font-bold tabular-nums">
+                    {(dashboard.kpis.qa_first_pass.rate * 100).toFixed(0)}%
+                  </span>
+                  {dashboard.kpis.qa_first_pass.total > 0 && (
+                    <Badge variant="outline" className="mb-1 text-[10px]">
+                      {dashboard.kpis.qa_first_pass.passed}/{dashboard.kpis.qa_first_pass.total}
+                    </Badge>
+                  )}
+                </div>
+                <p className="text-[10px] text-muted-foreground mt-0.5">
+                  Subtasks Done que pasaron QA al primer intento
+                </p>
+              </div>
             </div>
 
-            {/* Area progress */}
+            {/* Area throughput */}
             <section>
-              <h3 className="text-sm font-semibold mb-3">Progreso por área</h3>
+              <h3 className="text-sm font-semibold mb-3">CP completados por área esta semana</h3>
               {dashboard.area_progress.length > 0 ? (
                 <AreaProgressGrid areas={dashboard.area_progress} />
               ) : (
@@ -96,12 +112,12 @@ export default async function DashboardPage({ searchParams }: PageProps) {
               )}
             </section>
 
-            {/* Active devs */}
+            {/* All devs + live WIP */}
             <section>
               <h3 className="text-sm font-semibold mb-3">
-                Devs activos{" "}
+                Equipo — WIP actual{" "}
                 <span className="text-muted-foreground font-normal">
-                  ({dashboard.player_status.length})
+                  ({dashboard.player_status.length} devs)
                 </span>
               </h3>
               <div className="rounded-md border border-border overflow-hidden">

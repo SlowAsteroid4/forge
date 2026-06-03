@@ -24,16 +24,19 @@ def _cycle(
     start_offset: int = -4,
     end_offset: int = 0,
     status: str = "active",
+    start_date: date | None = None,
+    end_date: date | None = None,
 ) -> Cycle:
     today = date.today()
-    start = today + timedelta(days=start_offset)
+    start = start_date or (today + timedelta(days=start_offset))
+    end = end_date or (today + timedelta(days=end_offset))
     iso_cal = start.isocalendar()
     c = Cycle(
         iso_year=iso_cal[0],
         iso_week=iso_cal[1],
         name=name,
         start_date=start,
-        end_date=today + timedelta(days=end_offset),
+        end_date=end,
         status=status,
     )
     session.add(c)
@@ -75,6 +78,7 @@ def _subtask(
     cp_approval_required: bool = False,
     cp_approved_at: datetime | None = None,
     created_at_offset: int = 0,
+    qa_first_pass: bool | None = None,
 ) -> Subtask:
     st = Subtask(
         jira_key=key,
@@ -89,6 +93,7 @@ def _subtask(
         project_code=project_code,
         cp_approval_required=cp_approval_required,
         cp_approved_at=cp_approved_at,
+        qa_first_pass=qa_first_pass,
     )
     if created_at_offset:
         st.created_at = datetime.utcnow() - timedelta(days=abs(created_at_offset))
@@ -177,43 +182,46 @@ def test_kpis_cp_done_sums_done_subtasks(test_session: Session) -> None:
     assert result.kpis.cp_done.value == 8.0  # solo Done: 3+5
 
 
-def test_kpis_cp_pending_excludes_done_and_cancelled(test_session: Session) -> None:
+def test_kpis_qa_first_pass_rate_calculates_correctly(test_session: Session) -> None:
     cycle = _cycle(test_session)
-    _subtask(test_session, "T-10", cycle_id=cycle.id, status="Done", cp=3)
-    _subtask(test_session, "T-11", cycle_id=cycle.id, status="Cancelled", cp=5)
-    _subtask(test_session, "T-12", cycle_id=cycle.id, status="In Progress", cp=7)
-    _subtask(test_session, "T-13", cycle_id=cycle.id, status="Backlog", cp=2)
+    _subtask(test_session, "T-10", cycle_id=cycle.id, status="Done", qa_first_pass=True)
+    _subtask(test_session, "T-11", cycle_id=cycle.id, status="Done", qa_first_pass=True)
+    _subtask(test_session, "T-12", cycle_id=cycle.id, status="Done", qa_first_pass=False)
+    _subtask(test_session, "T-13", cycle_id=cycle.id, status="Done", qa_first_pass=None)  # no cuenta
+    _subtask(test_session, "T-14", cycle_id=cycle.id, status="In Progress", qa_first_pass=True)  # no Done
     svc = DashboardService(test_session)
 
     result = svc.get_dashboard(cycle_id=cycle.id)
 
     assert result.kpis is not None
-    assert result.kpis.cp_pending == 9.0  # solo los que no son Done/Cancelled: 7+2
+    qfp = result.kpis.qa_first_pass
+    assert qfp.total == 3   # solo Done con dato
+    assert qfp.passed == 2
+    assert abs(qfp.rate - 2 / 3) < 0.001
 
 
-def test_kpis_sp_total_only_done(test_session: Session) -> None:
+def test_kpis_qa_first_pass_empty_when_no_done(test_session: Session) -> None:
     cycle = _cycle(test_session)
-    _subtask(test_session, "T-20", cycle_id=cycle.id, status="Done", sp_final=10.5)
-    _subtask(test_session, "T-21", cycle_id=cycle.id, status="In Progress", sp_final=20.0)
     svc = DashboardService(test_session)
 
     result = svc.get_dashboard(cycle_id=cycle.id)
 
     assert result.kpis is not None
-    assert result.kpis.sp_total == 10.5
+    assert result.kpis.qa_first_pass.total == 0
+    assert result.kpis.qa_first_pass.rate == 0.0
 
 
-def test_kpis_bugs_derived_counts_bug_type(test_session: Session) -> None:
+def test_kpis_no_cp_pending_or_sp_total_fields(test_session: Session) -> None:
+    """cp_pending y sp_total no deben existir en KPICards (son de Arena)."""
     cycle = _cycle(test_session)
-    _subtask(test_session, "T-30", cycle_id=cycle.id, issue_type="Bug", status="In Progress")
-    _subtask(test_session, "T-31", cycle_id=cycle.id, issue_type="Bug", status="Done")
-    _subtask(test_session, "T-32", cycle_id=cycle.id, issue_type="Backend Sub-task", status="Done")
     svc = DashboardService(test_session)
 
     result = svc.get_dashboard(cycle_id=cycle.id)
 
     assert result.kpis is not None
-    assert result.kpis.bugs_derived == 2
+    assert not hasattr(result.kpis, "cp_pending")
+    assert not hasattr(result.kpis, "sp_total")
+    assert not hasattr(result.kpis, "bugs_derived")
 
 
 def test_kpis_project_filter_applies(test_session: Session) -> None:
@@ -376,17 +384,24 @@ def test_player_status_inactive_when_all_done(test_session: Session) -> None:
     assert dev.status == "inactive"
 
 
-def test_player_status_sp_sp_only_counts_done(test_session: Session) -> None:
+def test_player_status_wip_live_counts_all_non_terminal(test_session: Session) -> None:
+    """wip_live cuenta subtasks activas sin filtro de ciclo; done_subtasks solo del ciclo."""
     cycle = _cycle(test_session)
-    p = _player(test_session, "j-sp", "Dev SP", area="DB")
-    _subtask(test_session, "T-130", cycle_id=cycle.id, player_id=p.id, status="Done", sp_final=15.0)
-    _subtask(test_session, "T-131", cycle_id=cycle.id, player_id=p.id, status="In Progress", sp_final=20.0)
+    other_cycle = _cycle(
+        test_session, "Ciclo 2025-W01", status="closed",
+        start_date=date(2025, 1, 6), end_date=date(2025, 1, 10),
+    )
+    p = _player(test_session, "j-wlive", "Dev WipLive", area="DB")
+    _subtask(test_session, "T-130", cycle_id=cycle.id, player_id=p.id, status="In Progress")
+    _subtask(test_session, "T-131", cycle_id=other_cycle.id, player_id=p.id, status="In Progress")
+    _subtask(test_session, "T-132", cycle_id=cycle.id, player_id=p.id, status="Done")
     svc = DashboardService(test_session)
 
     result = svc.get_dashboard(cycle_id=cycle.id)
 
     dev = next(d for d in result.player_status if d.player_id == p.id)
-    assert dev.sp_sprint == 15.0
+    assert dev.wip_live == 2      # ambas In Progress sin importar ciclo
+    assert dev.done_subtasks == 1  # solo Done en el ciclo actual
 
 
 # ──────────────────────────────────────────────

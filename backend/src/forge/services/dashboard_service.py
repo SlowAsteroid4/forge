@@ -20,6 +20,7 @@ from forge.schemas.dashboard import (
     KPIValue,
     PlayerStatus,
     ProjectSummary,
+    QAFirstPass,
 )
 
 # ──────────────────────────────────────────────
@@ -152,9 +153,7 @@ class DashboardService:
                 previous_value=cp_done_prev,
                 delta_pct=delta,
             ),
-            cp_pending=self._cp_pending(cycle.id, project_code),
-            sp_total=self._sp_total(cycle.id, project_code),
-            bugs_derived=self._bugs_derived(cycle.id, project_code),
+            qa_first_pass=self._qa_first_pass(cycle.id, project_code),
         )
 
     def _cp_done(self, cycle_id: int, project_code: str | None) -> float:
@@ -168,38 +167,21 @@ class DashboardService:
             stmt = stmt.where(Subtask.project_code == project_code)
         return float(self._s.scalar(stmt) or 0)
 
-    def _cp_pending(self, cycle_id: int, project_code: str | None) -> float:
+    def _qa_first_pass(self, cycle_id: int, project_code: str | None) -> QAFirstPass:
+        """% de subtasks Done en el ciclo que pasaron QA al primer intento."""
         stmt = (
-            select(func.coalesce(func.sum(Subtask.cp), 0))
-            .where(Subtask.cycle_id == cycle_id)
-            .where(Subtask.status.not_in(list(_TERMINAL)))
-            .where(Subtask.cp.is_not(None))
-        )
-        if project_code:
-            stmt = stmt.where(Subtask.project_code == project_code)
-        return float(self._s.scalar(stmt) or 0)
-
-    def _sp_total(self, cycle_id: int, project_code: str | None) -> float:
-        stmt = (
-            select(func.coalesce(func.sum(Subtask.sp_final), 0))
+            select(Subtask.qa_first_pass)
             .where(Subtask.cycle_id == cycle_id)
             .where(Subtask.status == _DONE)
-            .where(Subtask.sp_final.is_not(None))
+            .where(Subtask.qa_first_pass.is_not(None))
         )
         if project_code:
             stmt = stmt.where(Subtask.project_code == project_code)
-        return float(self._s.scalar(stmt) or 0)
-
-    def _bugs_derived(self, cycle_id: int, project_code: str | None) -> int:
-        stmt = (
-            select(func.count())
-            .select_from(Subtask)
-            .where(Subtask.cycle_id == cycle_id)
-            .where(Subtask.issue_type == "Bug")
-        )
-        if project_code:
-            stmt = stmt.where(Subtask.project_code == project_code)
-        return int(self._s.scalar(stmt) or 0)
+        rows = self._s.scalars(stmt).all()
+        total = len(rows)
+        passed = sum(1 for v in rows if v)
+        rate = round(passed / total, 3) if total > 0 else 0.0
+        return QAFirstPass(rate=rate, passed=passed, total=total)
 
     # ──────────────────────────────────────────
     # Progreso por área
@@ -213,16 +195,13 @@ class DashboardService:
         result = []
         for area in _LEADERBOARD_AREAS:
             cp_done = self._area_cp_done(cycle.id, area, project_code)
-            cp_total = self._area_cp_total(cycle.id, area, project_code)
-            active_devs = self._area_active_devs(cycle.id, area, project_code)
-            has_bottleneck = self._area_has_wip_bottleneck(cycle.id, area, project_code)
+            active_devs = self._area_live_devs(area, project_code)
+            has_bottleneck = self._area_has_wip_bottleneck(area, project_code)
 
             result.append(
                 AreaProgress(
                     area=area,
                     cp_done=cp_done,
-                    cp_total=cp_total,
-                    progress_pct=round(cp_done / cp_total * 100, 1) if cp_total > 0 else 0.0,
                     active_devs=active_devs,
                     has_wip_bottleneck=has_bottleneck,
                 )
@@ -239,22 +218,11 @@ class DashboardService:
             stmt = stmt.where(Subtask.project_code == project_code)
         return float(self._s.scalar(stmt) or 0)
 
-    def _area_cp_total(self, cycle_id: int, area: str, project_code: str | None) -> float:
-        stmt = (
-            select(func.coalesce(func.sum(Subtask.cp), 0))
-            .where(Subtask.cycle_id == cycle_id, Subtask.area == area)
-            .where(Subtask.status != "Cancelled")
-            .where(Subtask.cp.is_not(None))
-        )
-        if project_code:
-            stmt = stmt.where(Subtask.project_code == project_code)
-        return float(self._s.scalar(stmt) or 0)
-
-    def _area_active_devs(self, cycle_id: int, area: str, project_code: str | None) -> int:
+    def _area_live_devs(self, area: str, project_code: str | None) -> int:
+        """Devs con WIP activo AHORA en esta área (sin filtro de ciclo)."""
         stmt = (
             select(func.count(Subtask.assignee_player_id.distinct()))
             .where(
-                Subtask.cycle_id == cycle_id,
                 Subtask.area == area,
                 Subtask.status.not_in(list(_TERMINAL)),
                 Subtask.assignee_player_id.is_not(None),
@@ -264,9 +232,8 @@ class DashboardService:
             stmt = stmt.where(Subtask.project_code == project_code)
         return int(self._s.scalar(stmt) or 0)
 
-    def _area_has_wip_bottleneck(
-        self, cycle_id: int, area: str, project_code: str | None
-    ) -> bool:
+    def _area_has_wip_bottleneck(self, area: str, project_code: str | None) -> bool:
+        """Algún dev del área excede umbral de WIP (en vivo, sin filtro de ciclo)."""
         threshold = _WIP_THRESHOLDS.get(area, _DEFAULT_WIP)
         inner = (
             select(
@@ -274,7 +241,6 @@ class DashboardService:
                 func.count().label("wip"),
             )
             .where(
-                Subtask.cycle_id == cycle_id,
                 Subtask.area == area,
                 Subtask.status.not_in(list(_TERMINAL)),
                 Subtask.assignee_player_id.is_not(None),
@@ -295,24 +261,15 @@ class DashboardService:
         cycle: Cycle,
         project_code: str | None,
     ) -> list[PlayerStatus]:
-        id_stmt = select(Subtask.assignee_player_id.distinct()).where(
-            Subtask.cycle_id == cycle.id,
-            Subtask.assignee_player_id.is_not(None),
-        )
-        if project_code:
-            id_stmt = id_stmt.where(Subtask.project_code == project_code)
-        player_ids: list[int] = [r[0] for r in self._s.execute(id_stmt)]
+        """Retorna TODOS los devs activos con WIP en vivo + done del ciclo."""
+        players_stmt = select(Player).where(Player.is_active.is_(True))
+        players = self._s.scalars(players_stmt).all()
 
         result: list[PlayerStatus] = []
-        for pid in player_ids:
-            player = self._s.get(Player, pid)
-            if player is None or not player.is_active:
-                continue
-
-            active_count = self._player_active_count(cycle.id, pid, project_code)
-            done_count = self._player_done_count(cycle.id, pid, project_code)
-            sp_total = self._player_sp(cycle.id, pid, project_code)
-            status = self._player_status_label(cycle.id, pid, player.area, active_count, project_code)
+        for player in players:
+            wip = self._player_wip_live(player.id, project_code)
+            done_count = self._player_done_count(cycle.id, player.id, project_code)
+            status = self._player_status_label(player.id, player.area, wip, project_code)
 
             result.append(
                 PlayerStatus(
@@ -320,23 +277,20 @@ class DashboardService:
                     display_name=player.display_name,
                     area=player.area,
                     avatar_code=player.avatar_code,
-                    active_subtasks=active_count,
+                    wip_live=wip,
                     done_subtasks=done_count,
-                    sp_sprint=sp_total,
                     status=status,
                 )
             )
 
-        return sorted(result, key=lambda p: p.sp_sprint, reverse=True)
+        return sorted(result, key=lambda p: (p.wip_live == 0, -p.done_subtasks))
 
-    def _player_active_count(
-        self, cycle_id: int, player_id: int, project_code: str | None
-    ) -> int:
+    def _player_wip_live(self, player_id: int, project_code: str | None) -> int:
+        """WIP en vivo del dev (sin filtro de ciclo)."""
         stmt = (
             select(func.count())
             .select_from(Subtask)
             .where(
-                Subtask.cycle_id == cycle_id,
                 Subtask.assignee_player_id == player_id,
                 Subtask.status.not_in(list(_TERMINAL)),
             )
@@ -361,36 +315,20 @@ class DashboardService:
             stmt = stmt.where(Subtask.project_code == project_code)
         return int(self._s.scalar(stmt) or 0)
 
-    def _player_sp(self, cycle_id: int, player_id: int, project_code: str | None) -> float:
-        stmt = (
-            select(func.coalesce(func.sum(Subtask.sp_final), 0))
-            .where(
-                Subtask.cycle_id == cycle_id,
-                Subtask.assignee_player_id == player_id,
-                Subtask.status == _DONE,
-                Subtask.sp_final.is_not(None),
-            )
-        )
-        if project_code:
-            stmt = stmt.where(Subtask.project_code == project_code)
-        return float(self._s.scalar(stmt) or 0)
-
     def _player_status_label(
         self,
-        cycle_id: int,
         player_id: int,
         area: str,
-        active_count: int,
+        wip_live: int,
         project_code: str | None,
     ) -> str:
-        if active_count == 0:
+        if wip_live == 0:
             return "inactive"
 
         blocked_stmt = (
             select(func.count())
             .select_from(Subtask)
             .where(
-                Subtask.cycle_id == cycle_id,
                 Subtask.assignee_player_id == player_id,
                 Subtask.status.in_(list(_BLOCKED)),
             )
@@ -399,11 +337,11 @@ class DashboardService:
             blocked_stmt = blocked_stmt.where(Subtask.project_code == project_code)
         blocked_count = int(self._s.scalar(blocked_stmt) or 0)
 
-        if blocked_count >= active_count:
+        if blocked_count >= wip_live:
             return "blocked"
 
         threshold = _WIP_THRESHOLDS.get(area, _DEFAULT_WIP)
-        if active_count > threshold:
+        if wip_live > threshold:
             return "wip_high"
 
         return "productive"
@@ -496,7 +434,7 @@ class DashboardService:
         ]
 
     def _alerts_wip_exceeded(self, cycle: Cycle, project_code: str | None) -> list[AlertItem]:
-        """Devs que superan su umbral de WIP."""
+        """Devs que superan su umbral de WIP (en vivo, sin filtro de ciclo)."""
         alerts: list[AlertItem] = []
         for area in _LEADERBOARD_AREAS:
             threshold = _WIP_THRESHOLDS.get(area, _DEFAULT_WIP)
@@ -506,7 +444,6 @@ class DashboardService:
                     func.count().label("wip"),
                 )
                 .where(
-                    Subtask.cycle_id == cycle.id,
                     Subtask.area == area,
                     Subtask.status.not_in(list(_TERMINAL)),
                     Subtask.assignee_player_id.is_not(None),

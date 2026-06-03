@@ -53,7 +53,7 @@ export function KpiCard({ title, value, decimals = 0, invertDelta = false }: Kpi
         </div>
         {previousValue != null && (
           <p className="text-[10px] text-muted-foreground mt-0.5">
-            Sprint anterior: {previousValue.toFixed(decimals)}
+            Ciclo anterior: {previousValue.toFixed(decimals)}
           </p>
         )}
       </CardContent>

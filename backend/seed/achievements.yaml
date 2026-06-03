@@ -1,0 +1,10 @@
+achievements:
+  - code: ACH04
+    name: "Primer MVP"
+    description: "Obtuviste el reconocimiento de MVP en un ciclo semanal por primera vez."
+    rarity: "rare"
+    sp_bonus: 0
+    unlock_condition_code: "mvp_weekly_first"
+    unlock_condition_params: null
+    icon_code: "star"
+    is_active: true

@@ -1,0 +1,10 @@
+buffs:
+  - code: B17
+    narrative_name: "MVP Semanal"
+    multiplier_type: "flat_sp_bonus"
+    trigger_description: "Otorgado al MVP del ciclo semanal por el PM/TL en el ritual de cierre."
+    value: 5.0
+    mechanic: "add"
+    applies_to_area: null
+    icon_code: "trophy"
+    is_active: true

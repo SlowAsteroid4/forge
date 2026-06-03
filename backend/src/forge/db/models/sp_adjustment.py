@@ -14,11 +14,15 @@ class SpAdjustment(Base):
     __tablename__ = "sp_adjustments"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    subtask_key: Mapped[str] = mapped_column(
-        String(20), ForeignKey("subtasks.jira_key", ondelete="CASCADE"), nullable=False, index=True
+    subtask_key: Mapped[str | None] = mapped_column(
+        String(20), ForeignKey("subtasks.jira_key", ondelete="CASCADE"), nullable=True, index=True
+    )
+    player_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("players.id", ondelete="CASCADE"), nullable=True, index=True
     )
     adjustment_type: Mapped[str] = mapped_column(
-        Enum("bonus", "penalty", name="adjustment_type_enum"), nullable=False
+        Enum("bonus", "penalty", "mvp_bonus", "mvp_reversal", name="adjustment_type_enum"),
+        nullable=False,
     )
     catalog_code: Mapped[str | None] = mapped_column(String(10))
     amount_sp: Mapped[float] = mapped_column(Float, nullable=False)

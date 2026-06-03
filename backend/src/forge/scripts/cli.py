@@ -94,6 +94,8 @@ def seed():
         _seed_players(session, now, totals)
         _seed_sprints(session, now, totals)
         _seed_engine_versions(session, now, totals)
+        _seed_buffs(session, now, totals)
+        _seed_achievements(session, now, totals)
         session.commit()
 
         console.print(
@@ -256,6 +258,70 @@ def _seed_engine_versions(session, now: datetime, totals: dict) -> None:
     totals["actualizados"] += updated
     console.print(
         f"  [green]✓[/green] engine_versions.yaml — {created} creados, {updated} actualizados"
+    )
+
+
+def _seed_buffs(session, now: datetime, totals: dict) -> None:
+    """Carga buffs.yaml. Upsert por code (PK)."""
+    from forge.db.models.buff import Buff
+
+    path = SEED_DIR / "buffs.yaml"
+    if not path.exists():
+        console.print(f"  [yellow]⚠[/yellow]  buffs.yaml no encontrado en {SEED_DIR}")
+        return
+
+    data = yaml.safe_load(path.read_text()) or {}
+    records = data.get("buffs", [])
+    created = updated = 0
+
+    for row in records:
+        code = row.get("code")
+        if not code:
+            continue
+        existing = session.get(Buff, code)
+        if existing:
+            for k, v in row.items():
+                setattr(existing, k, v)
+            updated += 1
+        else:
+            session.add(Buff(**row))
+            created += 1
+
+    totals["creados"] += created
+    totals["actualizados"] += updated
+    console.print(f"  [green]✓[/green] buffs.yaml         — {created} creados, {updated} actualizados")
+
+
+def _seed_achievements(session, now: datetime, totals: dict) -> None:
+    """Carga achievements.yaml. Upsert por code (PK)."""
+    from forge.db.models.achievement import Achievement
+
+    path = SEED_DIR / "achievements.yaml"
+    if not path.exists():
+        console.print(f"  [yellow]⚠[/yellow]  achievements.yaml no encontrado en {SEED_DIR}")
+        return
+
+    data = yaml.safe_load(path.read_text()) or {}
+    records = data.get("achievements", [])
+    created = updated = 0
+
+    for row in records:
+        code = row.get("code")
+        if not code:
+            continue
+        existing = session.get(Achievement, code)
+        if existing:
+            for k, v in row.items():
+                setattr(existing, k, v)
+            updated += 1
+        else:
+            session.add(Achievement(**row))
+            created += 1
+
+    totals["creados"] += created
+    totals["actualizados"] += updated
+    console.print(
+        f"  [green]✓[/green] achievements.yaml  — {created} creados, {updated} actualizados"
     )
 
 

@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from sqlalchemy import Float, ForeignKey, Integer
+from sqlalchemy import Float, ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from forge.db.base import Base
@@ -14,12 +14,15 @@ class LeaderboardSnapshot(Base):
     __tablename__ = "leaderboard_snapshots"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    sprint_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("sprints.id", ondelete="CASCADE"), nullable=False, index=True
+    sprint_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("sprints.id", ondelete="CASCADE"), nullable=True, index=True
     )
     cycle_id: Mapped[int | None] = mapped_column(
         Integer, ForeignKey("cycles.id", ondelete="SET NULL"), index=True
     )
+    period_type: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="sprint", index=True
+    )  # sprint | weekly | rolling_4
     player_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("players.id", ondelete="CASCADE"), nullable=False, index=True
     )

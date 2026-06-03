@@ -1,9 +1,11 @@
 """Router UC-05: cierre de ciclo semanal y MVP."""
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from forge.core.exceptions import NotFoundError, RuleViolationError
+from forge.db.models import Player
 from forge.db.session import get_session
 from forge.schemas.cycle_close import (
     CycleCandidate,
@@ -17,12 +19,24 @@ from forge.services.cycle_service import CycleService
 
 router = APIRouter(tags=["cycle-admin"])
 
+
+class PlayerOption(BaseModel):
+    id: int
+    display_name: str
+    area: str
+
 # Hardcoded admin_id=1 until auth is built (WP-08)
 _DEFAULT_ADMIN_ID = 1
 
 
 def _service(session: Session = Depends(get_session)) -> CycleService:
     return CycleService(session)
+
+
+@router.get("/players", response_model=list[PlayerOption])
+def list_players(session: Session = Depends(get_session)) -> list[PlayerOption]:
+    players = session.query(Player).filter(Player.is_active.is_(True)).order_by(Player.display_name).all()
+    return [PlayerOption(id=p.id, display_name=p.display_name, area=p.area or "") for p in players]
 
 
 @router.get("/cycles/{cycle_id}/mvp-candidates", response_model=list[CycleCandidate])
@@ -65,6 +79,7 @@ def close_cycle(
             mvp_reason=body.mvp_reason,
             closed_by=admin_id,
         )
+        svc._session.commit()
         return CycleCloseResponse(
             cycle_id=cycle.id,
             cycle_name=cycle.name,
@@ -94,6 +109,7 @@ def edit_mvp(
             reason=body.reason,
             edited_by=admin_id,
         )
+        svc._session.commit()
         return CycleCloseResponse(
             cycle_id=cycle.id,
             cycle_name=cycle.name,

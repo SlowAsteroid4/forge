@@ -17,6 +17,7 @@ import {
   Plug,
   FileText,
   ChevronDown,
+  Trophy,
 } from "lucide-react";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api";
@@ -60,10 +61,14 @@ const navSections: NavSection[] = [
         disabled: true,
       },
       {
-        label: "Cerrar sprint",
-        href: "/operations/close-sprint",
+        label: "Cerrar ciclo",
+        href: "/operations/cycles/close",
         icon: <Flag size={16} />,
-        disabled: true,
+      },
+      {
+        label: "Historial MVP",
+        href: "/operations/cycles/mvp-history",
+        icon: <Trophy size={16} />,
       },
     ],
   },

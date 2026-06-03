@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { api } from "@/lib/api";
 import type { DashboardResponse } from "@/lib/types/dashboard";
 import { OpsHeader } from "@/components/ops/header";
@@ -60,9 +61,19 @@ export default async function DashboardPage({ searchParams }: PageProps) {
                     })}
                   </p>
                 </div>
-                <span className="text-sm text-muted-foreground tabular-nums">
-                  {cycle.days_elapsed} de {cycle.days_total} días
-                </span>
+                <div className="flex items-center gap-3">
+                  {cycle.progress_pct >= 100 && (
+                    <Link
+                      href="/operations/cycles/close"
+                      className="text-xs font-medium text-primary hover:underline flex items-center gap-1"
+                    >
+                      Este ciclo está listo para cerrar →
+                    </Link>
+                  )}
+                  <span className="text-sm text-muted-foreground tabular-nums">
+                    {cycle.days_elapsed} de {cycle.days_total} días
+                  </span>
+                </div>
               </div>
               <Progress value={cycle.progress_pct} className="h-2" />
             </div>

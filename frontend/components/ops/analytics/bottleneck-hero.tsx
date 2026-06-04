@@ -2,6 +2,10 @@
 
 import type { StatusDetailRow } from "@/lib/types/analytics";
 
+// JPDS Nivel 1 (gobierno/producto: PO, PM) no genera métricas de flujo/delivery.
+// Solo las áreas de entrega participan en cuellos de botella y velocity.
+export const DELIVERY_AREAS = new Set(["BE", "FE", "DESIGN", "DB", "QA"]);
+
 // Terminal/passive states that are not bottlenecks
 const PASSIVE_STATES = new Set([
   "Done",
@@ -32,6 +36,9 @@ function findBottleneck(rows: StatusDetailRow[]): BottleneckResult | null {
   let best: BottleneckResult | null = null;
 
   for (const row of rows) {
+    // Skip governance areas (JPDS Nivel 1 — PO/PM excluded from flow metrics)
+    if (!DELIVERY_AREAS.has(row.group_key)) continue;
+
     for (const [status, hours] of Object.entries(row.by_status)) {
       if (PASSIVE_STATES.has(status)) continue;
       if (hours <= 0) continue;

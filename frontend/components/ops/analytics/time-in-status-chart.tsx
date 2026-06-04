@@ -11,6 +11,7 @@ import {
   Cell,
 } from "recharts";
 import type { TimeInStatusRow } from "@/lib/types/analytics";
+import { DELIVERY_AREAS } from "./bottleneck-hero";
 
 // Canonical JPDS palette per Manifiesto
 const BUCKET_COLORS: Record<string, string> = {
@@ -34,7 +35,7 @@ interface TimeInStatusChartProps {
 }
 
 export function TimeInStatusChart({ rows }: TimeInStatusChartProps) {
-  if (!rows.length) {
+  if (!rows.length || rows.every((r) => !DELIVERY_AREAS.has(r.group_key))) {
     return (
       <p className="text-sm text-muted-foreground py-8 text-center">
         Sin datos para este horizonte.
@@ -44,7 +45,10 @@ export function TimeInStatusChart({ rows }: TimeInStatusChartProps) {
 
   const buckets = ["dev_resp_h", "qa_h", "review_h", "blocked_h", "waiting_h"] as const;
 
-  const data = rows.map((row) => ({
+  // Only delivery areas — JPDS Nivel 1 (PO/PM) excluded from flow metrics
+  const deliveryRows = rows.filter((r) => DELIVERY_AREAS.has(r.group_key));
+
+  const data = deliveryRows.map((row) => ({
     name: row.group_key,
     dev_resp_h: row.dev_resp_h,
     qa_h: row.qa_h,

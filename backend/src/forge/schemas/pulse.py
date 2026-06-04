@@ -70,10 +70,17 @@ class ReadyQueueItem(BaseModel):
     cp: int | None
     assignee_name: str | None
     tiempo_en_ready_horas: float
-    priority: str | None = Field(
-        default=None,
-        description="Prioridad Jira. HUECO: campo no existe en el modelo actual.",
-    )
+    priority: str | None = Field(default=None, description="Prioridad Jira (Highest/High/Medium/Low/Lowest)")
+
+
+class FlagForReviewRequest(BaseModel):
+    note: str | None = Field(default=None, description="Nota opcional del PM/TL")
+
+
+class FlagForReviewResponse(BaseModel):
+    jira_key: str
+    audit_log_id: int
+    message: str
 
 
 class PulseSnapshot(BaseModel):

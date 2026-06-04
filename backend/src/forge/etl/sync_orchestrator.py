@@ -207,6 +207,12 @@ class SyncOrchestrator:
         cp = calculate_cp(complexity_size) if complexity_size else None
         cp_approval_required = needs_approval(complexity_size) if complexity_size else False
 
+        # priority: campo estándar de Jira (no customfield) → fields.priority.name
+        priority_field = fields.get("priority")
+        priority: str | None = None
+        if isinstance(priority_field, dict):
+            priority = priority_field.get("name")
+
         subtask_data = {
             "jira_key": key,
             "parent_story_key": (fields.get("parent") or {}).get("key"),
@@ -220,6 +226,7 @@ class SyncOrchestrator:
             "complexity_size": complexity_size,
             "cp": cp,
             "cp_approval_required": cp_approval_required,
+            "priority": priority,
             "last_synced_at": datetime.utcnow(),
             "raw_changelog": json.dumps(issue.get("changelog", {})),
             **time_metrics,

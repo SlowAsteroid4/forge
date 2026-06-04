@@ -1,10 +1,15 @@
-"""API Router para UC-16 Pulso Operativo (read-only)."""
+"""API Router para UC-16 Pulso Operativo."""
 
-from fastapi import APIRouter, Depends, Query
+import json
+from datetime import datetime
+
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
+from forge.db.models.audit_log import AuditLog
+from forge.db.models.subtask import Subtask
 from forge.db.session import get_session
-from forge.schemas.pulse import PulseSnapshot
+from forge.schemas.pulse import FlagForReviewRequest, FlagForReviewResponse, PulseSnapshot
 from forge.services.pulse_service import PulseService
 
 router = APIRouter(tags=["pulse"])
@@ -41,3 +46,45 @@ def get_pulse_now(
     """
     service = PulseService(session)
     return service.get_pulse(areas=area, project_code=project_code, player_id=player_id)
+
+
+@router.post("/flag/{jira_key}", response_model=FlagForReviewResponse)
+def flag_for_review(
+    jira_key: str,
+    body: FlagForReviewRequest,
+    session: Session = Depends(get_session),
+) -> FlagForReviewResponse:
+    """
+    UC-16.7: Marcar subtask para revisión.
+
+    REGLA CRÍTICA: Solo escribe a audit_log. NO modifica el status de la subtask
+    ni toca ninguna tabla de gamificación (sp_adjustments, leaderboard_snapshots).
+    """
+    subtask = session.get(Subtask, jira_key)
+    if subtask is None:
+        raise HTTPException(status_code=404, detail=f"Subtask {jira_key} no encontrada")
+
+    status_before = subtask.status  # registrar para confirmar que no cambia
+
+    log = AuditLog(
+        event_type="flagged_for_review",
+        entity_type="subtask",
+        entity_id=jira_key,
+        actor_player_id=None,
+        changes=json.dumps(
+            {
+                "status_unchanged": status_before,
+                "note": body.note,
+            }
+        ),
+        timestamp=datetime.utcnow(),
+    )
+    session.add(log)
+    session.commit()
+    session.refresh(log)
+
+    return FlagForReviewResponse(
+        jira_key=jira_key,
+        audit_log_id=log.id,
+        message=f"Subtask {jira_key} marcada para revisión (status sin cambiar: {status_before})",
+    )

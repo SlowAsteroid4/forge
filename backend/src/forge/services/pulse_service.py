@@ -305,11 +305,11 @@ class PulseService:
                     cp=r.cp,
                     assignee_name=self._name(r.assignee_player_id),
                     tiempo_en_ready_horas=round(tiempo_en_ready, 1),
-                    priority=None,  # HUECO: campo priority no existe en subtasks
+                    priority=r.priority,
                 )
             )
-        # Ordenar: más tiempo en Ready primero, luego más CP
-        items.sort(key=lambda x: (-x.tiempo_en_ready_horas, -(x.cp or 0)))
+        # Ordenar: priority real (Highest>High>Medium>Low>Lowest) + antigüedad en Ready
+        items.sort(key=lambda x: (_priority_order(x.priority), -x.tiempo_en_ready_horas))
         return items[:_READY_QUEUE_TOP_N]
 
     # ── Helpers de tiempo ─────────────────────────────────────────────────────
@@ -340,6 +340,20 @@ class PulseService:
 
 
 # ── Helpers puros ─────────────────────────────────────────────────────────────
+
+
+_PRIORITY_ORDER: dict[str, int] = {
+    "Highest": 1,
+    "High": 2,
+    "Medium": 3,
+    "Low": 4,
+    "Lowest": 5,
+}
+
+
+def _priority_order(priority: str | None) -> int:
+    """Orden numérico ascendente: Highest=1, sin prioridad=6."""
+    return _PRIORITY_ORDER.get(priority or "", 6)
 
 
 def _semaforo(pct: float) -> str:

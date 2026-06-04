@@ -18,6 +18,7 @@ import {
   FileText,
   ChevronDown,
   Trophy,
+  Activity,
 } from "lucide-react";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api";
@@ -43,6 +44,11 @@ const navSections: NavSection[] = [
         label: "Ciclo actual",
         href: "/dashboard",
         icon: <LayoutDashboard size={16} />,
+      },
+      {
+        label: "Pulso",
+        href: "/pulse",
+        icon: <Activity size={16} />,
       },
     ],
   },

@@ -36,6 +36,7 @@ class Subtask(Base):
     area: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
     summary: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    priority: Mapped[str | None] = mapped_column(String(20))
     assignee_player_id: Mapped[int | None] = mapped_column(
         Integer, ForeignKey("players.id", ondelete="SET NULL"), index=True
     )

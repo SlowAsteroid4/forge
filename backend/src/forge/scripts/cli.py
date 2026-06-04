@@ -28,9 +28,31 @@ SEED_DIR = Path(__file__).parent.parent.parent.parent / "seed"
 @app.command()
 def sync(
     jql: str = typer.Option(None, help="Query JQL personalizada"),
+    full: bool = typer.Option(
+        False,
+        "--full",
+        help=(
+            "Backfill completo: ignora el filtro -14d y trae TODOS los issues del proyecto. "
+            "Usar para sincronizar issues viejos con talla asignada hace >14 días. "
+            "Lento (puede tardar minutos); no reemplaza el sync diario incremental."
+        ),
+    ),
 ):
-    """Sincronizar con Jira (UC-01)."""
-    console.print("[bold blue]🔄 Iniciando sincronización con Jira...[/bold blue]")
+    """Sincronizar con Jira (UC-01).
+
+    Uso normal (incremental, rápido):  make sync
+    Backfill completo (sin -14d):      make sync-full  /  forge sync --full
+    JQL personalizada:                  forge sync --jql "project = YAP AND ..."
+    """
+    if full and jql:
+        console.print("[red]❌ --full y --jql son mutuamente excluyentes. Usa uno solo.[/red]")
+        raise typer.Exit(1)
+
+    if full:
+        jql = "project = YAP ORDER BY updated DESC"
+        console.print("[bold yellow]📦 Modo backfill completo (sin filtro de fecha)[/bold yellow]")
+    else:
+        console.print("[bold blue]🔄 Iniciando sincronización con Jira...[/bold blue]")
 
     session = SessionLocal()
     try:
@@ -328,34 +350,36 @@ def _seed_achievements(session, now: datetime, totals: dict) -> None:
 @app.command()
 def recalc(
     cycle_id: int = typer.Option(None, help="Recalcular solo este ciclo (default: activo)"),
+    all_cycles: bool = typer.Option(
+        False,
+        "--all-cycles",
+        help=(
+            "Iterar TODOS los ciclos en BD (no solo el activo). "
+            "Útil tras un backfill de tallas para materializar sp_final en ciclos cerrados. "
+            "Respeta la inmutabilidad de CP: nunca modifica cp ni complexity_size aprobados."
+        ),
+    ),
     force: bool = typer.Option(False, help="Forzar recálculo aunque engine_version no cambió"),
     system_player: str = typer.Option(
         "PM", help="Área del player que actúa como sistema para auto-debuffs"
     ),
 ):
-    """Recalcular SP de todas las subtasks de un ciclo (CP×multiplicadores + debuffs)."""
+    """Recalcular SP de las subtasks (CP×multiplicadores + debuffs).
+
+    Ciclo activo (default): make recalc
+    Todos los ciclos:        make recalc-all  /  forge recalc --all-cycles
+    Ciclo específico:        forge recalc --cycle-id 27
+    """
     from sqlalchemy import select
     from forge.services.engine import recalculate_cycle
+
+    if all_cycles and cycle_id is not None:
+        console.print("[red]❌ --all-cycles y --cycle-id son mutuamente excluyentes.[/red]")
+        raise typer.Exit(1)
 
     console.print("[bold blue]⚙️  Recalculando motor JPDS v2.0...[/bold blue]")
     session = SessionLocal()
     try:
-        # Resolver ciclo
-        if cycle_id is None:
-            stmt = select(Cycle).where(Cycle.status == "active").limit(1)
-            cycle = session.scalars(stmt).first()
-            if cycle is None:
-                console.print("[red]❌ No hay ciclo activo y no se pasó --cycle-id[/red]")
-                raise typer.Exit(1)
-            cycle_id = cycle.id
-            console.print(f"  Ciclo activo detectado: [cyan]{cycle.name}[/cyan] (id={cycle_id})")
-        else:
-            cycle = session.get(Cycle, cycle_id)
-            if cycle is None:
-                console.print(f"[red]❌ Cycle id={cycle_id} no encontrado[/red]")
-                raise typer.Exit(1)
-            console.print(f"  Ciclo: [cyan]{cycle.name}[/cyan]")
-
         # Resolver system_player (necesario para applied_by en SpAdjustments)
         stmt = select(Player).where(Player.area == system_player).limit(1)
         system_p = session.scalars(stmt).first()
@@ -366,20 +390,76 @@ def recalc(
         console.print(f"  Force: [cyan]{force}[/cyan]")
         console.print()
 
-        # Ejecutar
-        stats = recalculate_cycle(session, cycle_id, system_p.id, force=force)
-        session.commit()
+        if all_cycles:
+            # ── Modo --all-cycles: iterar todos los ciclos ────────────────────
+            console.print("[bold yellow]🔁 Modo --all-cycles: recalculando todos los ciclos[/bold yellow]")
+            cycle_ids = [
+                row[0]
+                for row in session.execute(select(Cycle.id).order_by(Cycle.id))
+            ]
+            console.print(f"  Ciclos encontrados: [cyan]{len(cycle_ids)}[/cyan]")
+            console.print()
 
-        # Mostrar resultados
-        table = Table(title=f"Recalc Engine — {cycle.name}")
-        table.add_column("Métrica", style="cyan")
-        table.add_column("Valor", style="white", justify="right")
-        table.add_row("Total subtasks", str(stats["total"]))
-        table.add_row("Procesadas", str(stats["processed"]))
-        table.add_row("Omitidas (sin cambios)", str(stats["skipped"]))
-        table.add_row("Errores", str(stats["errors"]))
-        table.add_row("SP total acumulado", f"{float(stats['sp_total']):.2f}")
-        console.print(table)
+            grand_total: dict[str, int | float] = {
+                "total": 0, "processed": 0, "skipped": 0, "errors": 0, "sp_total": 0.0
+            }
+            for cid in cycle_ids:
+                cycle_obj = session.get(Cycle, cid)
+                cycle_name = cycle_obj.name if cycle_obj else f"id={cid}"
+                partial = recalculate_cycle(session, cid, system_p.id, force=force)
+                session.commit()
+                grand_total["total"] = int(grand_total["total"]) + int(partial["total"])
+                grand_total["processed"] = int(grand_total["processed"]) + int(partial["processed"])
+                grand_total["skipped"] = int(grand_total["skipped"]) + int(partial["skipped"])
+                grand_total["errors"] = int(grand_total["errors"]) + int(partial["errors"])
+                grand_total["sp_total"] = float(grand_total["sp_total"]) + float(partial["sp_total"])
+                if int(partial["processed"]) > 0:
+                    console.print(
+                        f"  [dim]{cycle_name}[/dim]: "
+                        f"procesadas={partial['processed']} errores={partial['errors']}"
+                    )
+
+            table = Table(title="Recalc Engine — TODOS los ciclos")
+            table.add_column("Métrica", style="cyan")
+            table.add_column("Valor", style="white", justify="right")
+            table.add_row("Ciclos recorridos", str(len(cycle_ids)))
+            table.add_row("Total subtasks", str(grand_total["total"]))
+            table.add_row("Procesadas", str(grand_total["processed"]))
+            table.add_row("Omitidas (sin cambios)", str(grand_total["skipped"]))
+            table.add_row("Errores", str(grand_total["errors"]))
+            table.add_row("SP total acumulado", f"{float(grand_total['sp_total']):.2f}")
+            console.print(table)
+
+        else:
+            # ── Modo normal: un solo ciclo ────────────────────────────────────
+            if cycle_id is None:
+                stmt = select(Cycle).where(Cycle.status == "active").limit(1)
+                cycle = session.scalars(stmt).first()
+                if cycle is None:
+                    console.print("[red]❌ No hay ciclo activo y no se pasó --cycle-id[/red]")
+                    raise typer.Exit(1)
+                cycle_id = cycle.id
+                console.print(f"  Ciclo activo detectado: [cyan]{cycle.name}[/cyan] (id={cycle_id})")
+            else:
+                cycle = session.get(Cycle, cycle_id)
+                if cycle is None:
+                    console.print(f"[red]❌ Cycle id={cycle_id} no encontrado[/red]")
+                    raise typer.Exit(1)
+                console.print(f"  Ciclo: [cyan]{cycle.name}[/cyan]")
+
+            stats = recalculate_cycle(session, cycle_id, system_p.id, force=force)
+            session.commit()
+
+            table = Table(title=f"Recalc Engine — {cycle.name}")
+            table.add_column("Métrica", style="cyan")
+            table.add_column("Valor", style="white", justify="right")
+            table.add_row("Total subtasks", str(stats["total"]))
+            table.add_row("Procesadas", str(stats["processed"]))
+            table.add_row("Omitidas (sin cambios)", str(stats["skipped"]))
+            table.add_row("Errores", str(stats["errors"]))
+            table.add_row("SP total acumulado", f"{float(stats['sp_total']):.2f}")
+            console.print(table)
+
         console.print("[bold green]✅ Recalc completado[/bold green]")
 
     except Exception as e:

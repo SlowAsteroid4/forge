@@ -90,12 +90,21 @@ class SyncOrchestrator:
                     elif issue_type == "Story":
                         self._sync_story(issue_data, stats)
                     elif issue_type in [
+                        # Tipos de entrega estándar
                         "Sub-task",
                         "Subtask",
                         "Frontend Sub-Task",
                         "Backend Sub-task",
                         "Design Sub-task",
                         "Database Sub-task",
+                        # Tipos de entrega adicionales (WP-07j — antes ignorados)
+                        # Portan talla (customfield_10851) igual que los anteriores;
+                        # Bug Sub-task y Test Sub-Task pueden no llevar talla → cp queda NULL (legítimo)
+                        "Bug Sub-task",
+                        "Discovery Sub-task",
+                        "Infrastructure Sub-task",
+                        "Test Sub-Task",
+                        # Tipos de gestión / coordinación
                         "Task",
                         "Bug",
                         "Coordination",
@@ -200,7 +209,7 @@ class SyncOrchestrator:
 
         subtask_data = {
             "jira_key": key,
-            "parent_story_key": fields.get("parent", {}).get("key"),
+            "parent_story_key": (fields.get("parent") or {}).get("key"),
             "project_code": match_project(key, self.session),
             "issue_type": fields.get("issuetype", {}).get("name", "Sub-task"),
             "area": area,

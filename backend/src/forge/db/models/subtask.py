@@ -73,6 +73,9 @@ class Subtask(Base):
     dev_resp_biz_hours: Mapped[float | None] = mapped_column(
         Float, comment="Zona de responsabilidad del dev"
     )
+    # ready_for_qa = tiempo del dev esperando que QA tome la tarjeta (cuello del dev)
+    # qa_biz = tiempo de revisión activa de QA/Edgar (excluido de dev_resp)
+    ready_for_qa_biz_hours: Mapped[float | None] = mapped_column(Float)
     qa_biz_hours: Mapped[float | None] = mapped_column(Float)
     blocked_biz_hours: Mapped[float | None] = mapped_column(Float)
     waiting_biz_hours: Mapped[float | None] = mapped_column(Float)

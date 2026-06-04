@@ -9,6 +9,15 @@ import { AlertsPanel } from "@/components/ops/alerts-panel";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
 
+/**
+ * Parsea un string "YYYY-MM-DD" como fecha LOCAL (no UTC).
+ * new Date("2026-06-01") se interpreta como UTC medianoche → en CDMX (UTC-6)
+ * aparece como 31 may. Al pasar "2026-06-01T00:00:00" sin Z se usa hora local.
+ */
+function localDate(dateStr: string): Date {
+  return new Date(`${dateStr}T00:00:00`);
+}
+
 interface PageProps {
   searchParams: Promise<{ project?: string; cycle_id?: string }>;
 }
@@ -50,12 +59,12 @@ export default async function DashboardPage({ searchParams }: PageProps) {
                 <div>
                   <h2 className="text-base font-semibold">{cycle.name}</h2>
                   <p className="text-xs text-muted-foreground">
-                    {new Date(cycle.start_date).toLocaleDateString("es-MX", {
+                    {localDate(cycle.start_date).toLocaleDateString("es-MX", {
                       day: "numeric",
                       month: "short",
                     })}{" "}
                     —{" "}
-                    {new Date(cycle.end_date).toLocaleDateString("es-MX", {
+                    {localDate(cycle.end_date).toLocaleDateString("es-MX", {
                       day: "numeric",
                       month: "short",
                       year: "numeric",

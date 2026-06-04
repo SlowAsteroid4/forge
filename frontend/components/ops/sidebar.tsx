@@ -76,9 +76,14 @@ const navSections: NavSection[] = [
     title: "Analítica",
     items: [
       {
+        label: "Métricas de flujo",
+        href: "/analytics/flow",
+        icon: <TrendingUp size={16} />,
+      },
+      {
         label: "Forecast",
         href: "/analytics/forecast",
-        icon: <TrendingUp size={16} />,
+        icon: <DollarSign size={16} />,
         disabled: true,
       },
       {

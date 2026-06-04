@@ -69,20 +69,12 @@ class DevQaFirstPass(BaseModel):
     total: int = Field(description="Subtasks Done con dato de QA")
     passed: int = Field(description="Subtasks que pasaron QA en primer intento")
     first_pass_pct: float = Field(description="% first-pass (0–100)")
-    data_caveat: str | None = Field(
-        default=None,
-        description="'etl_status_mismatch' si los datos son poco confiables por bug ETL",
-    )
 
 
 class QaFirstPassResponse(BaseModel):
-    """QA first-pass por dev en el scope dado.
-
-    ⚠️ data_warning se activa mientras el bug de detección de estados Jira no se corrija.
-    """
+    """QA first-pass por dev en el scope dado."""
 
     scope: str
-    data_warning: str | None = None
     devs: list[DevQaFirstPass]
 
 

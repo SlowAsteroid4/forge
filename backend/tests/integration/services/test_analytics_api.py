@@ -131,7 +131,7 @@ class TestAnalyticsEndpoints:
         assert dev["biz_days"] == 5
         assert dev["cp_per_day"] == 3.0
 
-    def test_qa_first_pass_returns_200_with_warning(
+    def test_qa_first_pass_returns_200(
         self, client: TestClient, session: Session
     ) -> None:
         _seed(session)
@@ -139,7 +139,7 @@ class TestAnalyticsEndpoints:
         assert resp.status_code == 200
         data = resp.json()
         assert "devs" in data
-        assert data["data_warning"] is not None  # ETL bug warning presente
+        assert "data_warning" not in data  # caveat removido tras fix ETL
 
     def test_time_in_status_returns_200(self, client: TestClient, session: Session) -> None:
         _seed(session)

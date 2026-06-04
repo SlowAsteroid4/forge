@@ -161,13 +161,8 @@ class AnalyticsService:
     def qa_first_pass_by_dev(self, scope: str = "historical") -> list[dict[str, Any]]:
         """Porcentaje de tareas que pasan QA en primer intento, por dev.
 
-        ⚠️  Limitación de datos conocida (WP-07a): el ETL detecta fallo QA vía
-        transición 'Testing'/'QA' → 'In Progress'/'To Do', pero los estados reales
-        en Jira son 'In QA' y 'Ready for QA'. Hasta que el ETL se corrija, el campo
-        `qa_first_pass` reporta 100% first-pass para todos los devs. Los valores se
-        devuelven tal cual para que el frontend los muestre con advertencia.
-
-        Solo devs con área en DEV_AREAS.
+        Solo devs con área en DEV_AREAS. Subtasks sin paso por QA (qa_first_pass=NULL)
+        se excluyen del denominador.
 
         Args:
             scope: 'cycle' | 'window' | 'historical'.
@@ -208,7 +203,6 @@ class AnalyticsService:
                     "total": total,
                     "passed": passed,
                     "first_pass_pct": round(passed / total * 100, 1) if total else 0.0,
-                    "data_caveat": "etl_status_mismatch",
                 }
             )
 

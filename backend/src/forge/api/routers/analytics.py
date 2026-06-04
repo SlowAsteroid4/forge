@@ -16,12 +16,6 @@ from forge.services.analytics_service import AnalyticsService
 
 router = APIRouter(tags=["analytics"])
 
-_QA_ETL_WARNING = (
-    "Los estados Jira reales son 'In QA' y 'Ready for QA', pero el ETL detecta "
-    "fallos QA vía 'Testing'/'QA' → 'In Progress'. Hasta que se corrija el ETL, "
-    "qa_first_pass reporta 100% first-pass. Pendiente: WP-07a enhancement."
-)
-
 
 def _svc(session: Session = Depends(get_session)) -> AnalyticsService:
     return AnalyticsService(session)
@@ -102,18 +96,13 @@ def get_qa_first_pass_by_dev(
     ),
     svc: AnalyticsService = Depends(_svc),
 ) -> QaFirstPassResponse:
-    """% QA first-pass por dev en el scope dado.
-
-    ⚠️ Ver data_warning en la respuesta: hay un bug ETL que hace que todos los
-    devs reporten 100% first-pass hasta que se corrija el mapeado de estados.
-    """
+    """% QA first-pass por dev en el scope dado."""
     try:
         devs = svc.qa_first_pass_by_dev(scope=scope)
         from forge.schemas.analytics import DevQaFirstPass
 
         return QaFirstPassResponse(
             scope=scope,
-            data_warning=_QA_ETL_WARNING,
             devs=[DevQaFirstPass(**d) for d in devs],
         )
     except Exception as e:

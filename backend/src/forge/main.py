@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from forge.api.routers import cp_approvals, cycle_admin, dashboard, integrations
+from forge.api.routers import analytics, cp_approvals, cycle_admin, dashboard, integrations
 from forge.core.config import get_settings
 from forge.core.logging import setup_logging
 
@@ -41,6 +41,7 @@ app.include_router(integrations.router, prefix=f"{settings.api_v1_prefix}/integr
 app.include_router(dashboard.router, prefix=f"{settings.api_v1_prefix}/dashboard")
 app.include_router(cp_approvals.router, prefix=f"{settings.api_v1_prefix}/cp-approvals")
 app.include_router(cycle_admin.router, prefix=f"{settings.api_v1_prefix}/admin")
+app.include_router(analytics.router, prefix=f"{settings.api_v1_prefix}/analytics")
 
 
 @app.get("/")

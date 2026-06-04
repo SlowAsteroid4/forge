@@ -18,11 +18,13 @@ class PulseGlobals(BaseModel):
 
 class WipAreaCard(BaseModel):
     area: str
-    wip_actual: int
-    wip_limit: int
-    pct_utilization: float = Field(description="wip_actual / wip_limit * 100")
-    semaforo: str = Field(description="verde (<80%), amarillo (80-100%), rojo (>100%)")
-    activas: list[dict[str, Any]] = Field(description="Detalle de subtasks activas en el area")
+    wip_actual: int = Field(description="Total subtasks activas asignadas en el area (excluye sin asignee)")
+    wip_limit: int = Field(description="Limite WIP por dev (no por area)")
+    max_wip_individual: int = Field(description="WIP mas alto de cualquier dev en el area")
+    devs_over_limit: int = Field(description="Devs en el area que exceden su limite individual")
+    pct_utilization: float = Field(description="max_wip_individual / wip_limit * 100 (base del semaforo)")
+    semaforo: str = Field(description="verde: ningun dev excede; amarillo: alguien en el limite; rojo: alguien excede")
+    activas: list[dict[str, Any]] = Field(description="Detalle de subtasks activas asignadas en el area")
     assignee_count: int = Field(description="Numero de devs distintos con WIP en el area")
 
 

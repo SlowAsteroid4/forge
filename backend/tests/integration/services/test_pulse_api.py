@@ -133,6 +133,17 @@ def test_pulse_wip_by_area_excluye_qa(client: TestClient, session: Session):
     assert "QA" not in areas
 
 
+def test_pulse_wip_card_tiene_campos_por_dev(client: TestClient, session: Session):
+    _seed(session)
+    data = client.get("/api/pulse/now").json()
+    # Todos los cards deben tener los nuevos campos
+    for card in data["wip_by_area"]:
+        assert "max_wip_individual" in card
+        assert "devs_over_limit" in card
+        assert isinstance(card["max_wip_individual"], int)
+        assert isinstance(card["devs_over_limit"], int)
+
+
 def test_pulse_blocks_detecta_bloqueados(client: TestClient, session: Session):
     _seed(session)
     data = client.get("/api/pulse/now").json()

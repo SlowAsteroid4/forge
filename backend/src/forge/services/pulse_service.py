@@ -175,18 +175,35 @@ class PulseService:
 
         cards: list[WipAreaCard] = []
         for area in semaphore_areas:
-            area_rows = [r for r in rows if r.area == area and r.status in _WIP_STATUSES]
-            wip_actual = len(area_rows)
+            # Solo subtasks ASIGNADAS cuentan para WIP (sin asignee no pertenecen a nadie)
+            area_rows = [
+                r for r in rows
+                if r.area == area and r.status in _WIP_STATUSES and r.assignee_player_id is not None
+            ]
             wip_limit = self._wip_limits.get(area, 5)
-            pct = round(wip_actual / wip_limit * 100, 1) if wip_limit > 0 else 0.0
+
+            # WIP por dev individual
+            wip_per_dev: dict[int, int] = {}
+            for r in area_rows:
+                pid = r.assignee_player_id
+                if pid is not None:
+                    wip_per_dev[pid] = wip_per_dev.get(pid, 0) + 1
+
+            wip_actual = len(area_rows)
+            max_wip_individual = max(wip_per_dev.values()) if wip_per_dev else 0
+            devs_over_limit = sum(1 for w in wip_per_dev.values() if w > wip_limit)
+
+            # Semáforo basado en WIP INDIVIDUAL máximo vs límite por dev
+            pct = round(max_wip_individual / wip_limit * 100, 1) if wip_limit > 0 else 0.0
             semaforo = _semaforo(pct)
-            assignees = {r.assignee_player_id for r in area_rows if r.assignee_player_id}
 
             cards.append(
                 WipAreaCard(
                     area=area,
                     wip_actual=wip_actual,
                     wip_limit=wip_limit,
+                    max_wip_individual=max_wip_individual,
+                    devs_over_limit=devs_over_limit,
                     pct_utilization=pct,
                     semaforo=semaforo,
                     activas=[
@@ -199,7 +216,7 @@ class PulseService:
                         }
                         for r in area_rows
                     ],
-                    assignee_count=len(assignees),
+                    assignee_count=len(wip_per_dev),
                 )
             )
         return cards

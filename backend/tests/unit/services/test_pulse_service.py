@@ -143,6 +143,8 @@ def test_wip_area_verde(test_session: Session):
     snap = PulseService(test_session).get_pulse()
     be = next(c for c in snap.wip_by_area if c.area == "BE")
     assert be.wip_actual == 2
+    assert be.max_wip_individual == 2  # Dev1 tiene 2 → 66% del límite 3
+    assert be.devs_over_limit == 0
     assert be.semaforo == "verde"
 
 
@@ -157,6 +159,8 @@ def test_wip_area_amarillo(test_session: Session):
     snap = PulseService(test_session).get_pulse()
     be = next(c for c in snap.wip_by_area if c.area == "BE")
     assert be.wip_actual == 3
+    assert be.max_wip_individual == 3  # Dev2 en límite → amarillo (100%)
+    assert be.devs_over_limit == 0
     assert be.semaforo == "amarillo"
 
 
@@ -170,7 +174,45 @@ def test_wip_area_rojo(test_session: Session):
     snap = PulseService(test_session).get_pulse()
     fe = next(c for c in snap.wip_by_area if c.area == "FE")
     assert fe.wip_actual == 4
+    assert fe.max_wip_individual == 4  # Dev3 tiene 4 > límite 3
+    assert fe.devs_over_limit == 1
     assert fe.semaforo == "rojo"
+
+
+def test_wip_unassigned_no_cuenta(test_session: Session):
+    """Subtasks sin asignee NO deben inflar el WIP del área."""
+    _seed_wip_limits(test_session)
+    _project(test_session)
+    # 10 subtasks activas en BE pero sin asignee
+    for i in range(10):
+        _subtask(test_session, f"YAP-UN{i}", "In Progress", "BE", player_id=None)
+
+    snap = PulseService(test_session).get_pulse()
+    be = next(c for c in snap.wip_by_area if c.area == "BE")
+    assert be.wip_actual == 0        # sin asignee → no cuentan
+    assert be.max_wip_individual == 0
+    assert be.semaforo == "verde"
+
+
+def test_wip_multiples_devs_solo_uno_excede(test_session: Session):
+    """Verde si solo algunos devs están en límite; rojo si uno excede."""
+    _seed_wip_limits(test_session)
+    _project(test_session)
+    p_ok = _player(test_session, 20, "BE", "DevOK")
+    p_over = _player(test_session, 21, "BE", "DevOver")
+    # DevOK tiene 2 (dentro del límite 3)
+    _subtask(test_session, "YAP-OK1", "In Progress", "BE", p_ok.id)
+    _subtask(test_session, "YAP-OK2", "In Review", "BE", p_ok.id)
+    # DevOver tiene 4 (excede límite 3)
+    for i in range(4):
+        _subtask(test_session, f"YAP-OV{i}", "In Progress", "BE", p_over.id)
+
+    snap = PulseService(test_session).get_pulse()
+    be = next(c for c in snap.wip_by_area if c.area == "BE")
+    assert be.wip_actual == 6
+    assert be.max_wip_individual == 4
+    assert be.devs_over_limit == 1
+    assert be.semaforo == "rojo"
 
 
 def test_qa_excluida_del_wip(test_session: Session):

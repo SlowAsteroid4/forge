@@ -19,6 +19,7 @@ import {
   ChevronDown,
   Trophy,
   Activity,
+  Crown,
 } from "lucide-react";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api";
@@ -75,6 +76,16 @@ const navSections: NavSection[] = [
         label: "Historial MVP",
         href: "/operations/cycles/mvp-history",
         icon: <Trophy size={16} />,
+      },
+      {
+        label: "Cierre mensual",
+        href: "/operations/months/2026-05/close",
+        icon: <Crown size={16} />,
+      },
+      {
+        label: "MVP del Mes",
+        href: "/operations/months/mvp-history",
+        icon: <Crown size={16} />,
       },
     ],
   },

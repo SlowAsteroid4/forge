@@ -31,10 +31,11 @@ _REASON_MIN_LEN = 30
 # 72 business hours for edit window (vs 24h for weekly)
 _EDIT_WINDOW_BIZ_HOURS = 72.0
 
-# NOTE (demo): The spec requires >=4 closed/archived cycles in the month for a full close.
-# In the current DB only May-2026 has weekly MVPs (W22 only). The validation is relaxed
-# to ">=1 weekly MVP candidate available" for demo. In production, enforce >=4.
-_MIN_WEEKLY_MVPS_FOR_CLOSE = 1
+# AC-17.6: el mes necesita >=4 ciclos del mes en estado closed/archived para el cierre.
+# GATE: número de ciclos cerrados (independiente de cuántos MVPs distintos haya —
+# un player puede repetir MVP en varios ciclos del mismo mes).
+# CANDIDATOS: DISTINCT mvp_player_id de esos ciclos (puede ser < 4 si alguien repitió).
+_MIN_CLOSED_CYCLES_FOR_CLOSE = 4
 
 
 class MonthlyMvpService:
@@ -143,11 +144,13 @@ class MonthlyMvpService:
         # Validaciones bloqueantes
         blocking_errors: list[str] = []
 
-        # 1. Debe haber al menos _MIN_WEEKLY_MVPS_FOR_CLOSE MVP semanal
-        if len(candidates) < _MIN_WEEKLY_MVPS_FOR_CLOSE:
+        # 1. AC-17.6: gate de >=4 ciclos del mes en closed/archived con MVP semanal asignado
+        cycles_with_mvp = [c for c in cycles if c.status in ("closed", "archived") and c.mvp_player_id is not None]
+        n_closed_with_mvp = len(cycles_with_mvp)
+        if n_closed_with_mvp < _MIN_CLOSED_CYCLES_FOR_CLOSE:
             blocking_errors.append(
-                f"No hay MVPs semanales disponibles en {year}-{month:02d}. "
-                "Cierra al menos un ciclo del mes con MVP asignado antes de cerrar el mes."
+                f"Este mes tiene {n_closed_with_mvp} ciclo(s) cerrado(s) con MVP semanal; "
+                f"se requieren {_MIN_CLOSED_CYCLES_FOR_CLOSE} para el cierre mensual."
             )
 
         # 2. No debe existir ya un cierre mensual
@@ -469,6 +472,54 @@ class MonthlyMvpService:
                 }
             )
         return results
+
+    # ── Reversión auditada (admin) ────────────────────────────────────────
+
+    def revert_month(self, year: int, month: int, reason: str, admin_id: int) -> None:
+        """
+        Revierte un cierre mensual de demo/error de forma append-only y auditada.
+
+        - SpAdjustment reversal -10 (B17M) al player anterior.
+        - Elimina la fila mvp_monthly (es un registro de demo inválido bajo regla estricta).
+        - NO toca AchievementUnlock: si el player ya tenía ACH04 por otra vía, no se altera.
+        - AuditLog action_type='mvp_monthly_reverted'.
+        """
+        record = self._get_existing_monthly(year, month)
+        if record is None:
+            raise NotFoundError(f"No existe cierre mensual para {year}-{month:02d}.")
+
+        now = datetime.utcnow()
+        period_label = f"{year}-{month:02d}"
+
+        # Reversal SP append-only
+        reversal = SpAdjustment(
+            subtask_key=None,
+            player_id=record.player_id,
+            adjustment_type="mvp_reversal",
+            catalog_code=_MONTHLY_MVP_BUFF_CODE,
+            amount_sp=float(record.sp_reward),
+            reason=f"Reversión cierre mensual {period_label} (demo con umbral relajado): {reason}",
+            applied_by=admin_id,
+            applied_at=now,
+            cycle_id=None,
+        )
+        self._session.add(reversal)
+
+        self._audit(
+            "mvp_monthly_reverted",
+            "mvp_monthly",
+            period_label,
+            admin_id,
+            {
+                "reverted_player_id": record.player_id,
+                "reverted_sp": record.sp_reward,
+                "reason": reason,
+                "original_assigned_at": record.assigned_at.isoformat(),
+            },
+        )
+
+        self._session.delete(record)
+        self._session.flush()
 
     # ── Helpers privados ──────────────────────────────────────────────────
 

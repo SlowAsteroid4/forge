@@ -78,6 +78,20 @@ def _admin(session: Session) -> Player:
     return _player(session, idx=99, name="Admin")
 
 
+def _four_closed_cycles_with_mvps(
+    session: Session, *, mvp_player_id: int, extra_player_id: int | None = None
+) -> list[Cycle]:
+    """Fixture AC-17.6: 4 ciclos closed del mismo mes, todos con MVP."""
+    days = [4, 11, 18, 25]
+    mvp_ids = [mvp_player_id, extra_player_id or mvp_player_id, mvp_player_id, mvp_player_id]
+    cycles = []
+    for week, day, pid in zip([19, 20, 21, 22], days, mvp_ids):
+        cycles.append(
+            _cycle(session, week=week, day_start=day, status="closed", mvp_player_id=pid)
+        )
+    return cycles
+
+
 # ── list_candidates ───────────────────────────────────────────────────────────
 
 
@@ -118,11 +132,11 @@ def test_list_candidates_no_mvp_returns_empty(test_session: Session) -> None:
 def test_close_month_creates_record_and_adjustment(test_session: Session) -> None:
     p = _player(test_session, idx=1)
     admin = _admin(test_session)
-    _cycle(test_session, week=22, day_start=25, status="closed", mvp_player_id=p.id)
+    _four_closed_cycles_with_mvps(test_session, mvp_player_id=p.id)
     _ach04(test_session)
 
     svc = MonthlyMvpService(test_session)
-    record = svc.close_month(2026, 5, p.id, "Excelente trabajo durante todo el mes de mayo", admin.id)
+    record = svc.close_month(2026, 5, p.id, "Excelente trabajo durante todo el mes de mayo con 4 ciclos cerrados", admin.id)
 
     assert record.year == 2026
     assert record.month == 5
@@ -136,16 +150,33 @@ def test_close_month_creates_record_and_adjustment(test_session: Session) -> Non
     assert adj.amount_sp == 10.0
 
 
-def test_close_month_blocking_rule_non_weekly_mvp(test_session: Session) -> None:
-    """REGLA BLOQUEANTE: elegir un player que no fue MVP semanal debe lanzar error."""
-    p_mvp = _player(test_session, idx=1)
-    p_non_mvp = _player(test_session, idx=2)
+def test_close_month_requires_4_closed_cycles(test_session: Session) -> None:
+    """AC-17.6: mes con solo 3 ciclos cerrados con MVP es rechazado."""
+    p = _player(test_session, idx=1)
     admin = _admin(test_session)
-    _cycle(test_session, week=22, day_start=25, status="closed", mvp_player_id=p_mvp.id)
+    # Solo 3 ciclos (no llegan a 4)
+    for week, day in [(19, 4), (20, 11), (21, 18)]:
+        _cycle(test_session, week=week, day_start=day, status="closed", mvp_player_id=p.id)
+    _ach04(test_session)
 
     svc = MonthlyMvpService(test_session)
     with pytest.raises(RuleViolationError) as exc_info:
-        svc.close_month(2026, 5, p_non_mvp.id, "Este jugador no fue MVP semanal nunca en el mes", admin.id)
+        svc.close_month(2026, 5, p.id, "Intentando cerrar con solo 3 ciclos en lugar de 4 requeridos", admin.id)
+
+    errors = exc_info.value.details.get("blocking_errors", [])
+    assert any("se requieren 4" in e for e in errors)
+
+
+def test_close_month_blocking_rule_non_weekly_mvp(test_session: Session) -> None:
+    """REGLA BLOQUEANTE AC-17.4: elegir un player que no fue MVP semanal debe lanzar error."""
+    p_mvp = _player(test_session, idx=1)
+    p_non_mvp = _player(test_session, idx=2)
+    admin = _admin(test_session)
+    _four_closed_cycles_with_mvps(test_session, mvp_player_id=p_mvp.id)
+
+    svc = MonthlyMvpService(test_session)
+    with pytest.raises(RuleViolationError) as exc_info:
+        svc.close_month(2026, 5, p_non_mvp.id, "Este jugador no fue MVP semanal nunca en el mes de mayo", admin.id)
 
     assert "AC-17.4" in str(exc_info.value) or "MVP semanal" in str(exc_info.value)
 
@@ -153,11 +184,11 @@ def test_close_month_blocking_rule_non_weekly_mvp(test_session: Session) -> None
 def test_close_month_unlocks_ach04_first_time(test_session: Session) -> None:
     p = _player(test_session, idx=1)
     admin = _admin(test_session)
-    _cycle(test_session, week=22, day_start=25, status="closed", mvp_player_id=p.id)
+    _four_closed_cycles_with_mvps(test_session, mvp_player_id=p.id)
     _ach04(test_session)
 
     svc = MonthlyMvpService(test_session)
-    svc.close_month(2026, 5, p.id, "Excelente trabajo durante todo el mes de mayo en el proyecto", admin.id)
+    svc.close_month(2026, 5, p.id, "Excelente trabajo durante todo el mes de mayo con 4 ciclos cerrados y validados", admin.id)
 
     unlock = test_session.query(AchievementUnlock).filter_by(
         player_id=p.id, achievement_code="ACH04"
@@ -166,13 +197,12 @@ def test_close_month_unlocks_ach04_first_time(test_session: Session) -> None:
 
 
 def test_close_month_no_duplicate_ach04(test_session: Session) -> None:
-    """ACH04 no se desbloquea si el player ya lo tiene."""
+    """ACH04 no se desbloquea si el player ya lo tiene (ej. por MVP semanal previo)."""
     p = _player(test_session, idx=1)
     admin = _admin(test_session)
-    _cycle(test_session, week=22, day_start=25, status="closed", mvp_player_id=p.id)
-    ach = _ach04(test_session)
+    _four_closed_cycles_with_mvps(test_session, mvp_player_id=p.id)
+    _ach04(test_session)
 
-    # Ya tiene ACH04
     existing_unlock = AchievementUnlock(
         player_id=p.id,
         achievement_code="ACH04",
@@ -182,7 +212,7 @@ def test_close_month_no_duplicate_ach04(test_session: Session) -> None:
     test_session.flush()
 
     svc = MonthlyMvpService(test_session)
-    svc.close_month(2026, 5, p.id, "Excelente trabajo durante todo el mes de mayo en el proyecto", admin.id)
+    svc.close_month(2026, 5, p.id, "Excelente trabajo durante todo el mes de mayo con 4 ciclos cerrados y validados", admin.id)
 
     unlocks = test_session.query(AchievementUnlock).filter_by(
         player_id=p.id, achievement_code="ACH04"
@@ -193,20 +223,20 @@ def test_close_month_no_duplicate_ach04(test_session: Session) -> None:
 def test_close_month_duplicate_rejected(test_session: Session) -> None:
     p = _player(test_session, idx=1)
     admin = _admin(test_session)
-    _cycle(test_session, week=22, day_start=25, status="closed", mvp_player_id=p.id)
+    _four_closed_cycles_with_mvps(test_session, mvp_player_id=p.id)
     _ach04(test_session)
 
     svc = MonthlyMvpService(test_session)
-    svc.close_month(2026, 5, p.id, "Excelente trabajo durante todo el mes de mayo", admin.id)
+    svc.close_month(2026, 5, p.id, "Excelente trabajo durante todo el mes de mayo con 4 ciclos cerrados", admin.id)
 
     with pytest.raises(RuleViolationError):
-        svc.close_month(2026, 5, p.id, "Intento de cierre duplicado del mes de mayo nuevamente", admin.id)
+        svc.close_month(2026, 5, p.id, "Intento de cierre duplicado del mes de mayo con 4 ciclos cerrados nuevamente", admin.id)
 
 
 def test_close_month_reason_too_short(test_session: Session) -> None:
     p = _player(test_session, idx=1)
     admin = _admin(test_session)
-    _cycle(test_session, week=22, day_start=25, status="closed", mvp_player_id=p.id)
+    _four_closed_cycles_with_mvps(test_session, mvp_player_id=p.id)
 
     svc = MonthlyMvpService(test_session)
     with pytest.raises(RuleViolationError):
@@ -221,14 +251,13 @@ def test_edit_monthly_mvp_reversal_append_only(test_session: Session) -> None:
     p1 = _player(test_session, idx=1)
     p2 = _player(test_session, idx=2)
     admin = _admin(test_session)
-    _cycle(test_session, week=22, day_start=25, status="closed", mvp_player_id=p1.id)
-    _cycle(test_session, week=21, day_start=18, status="archived", mvp_player_id=p2.id)
+    _four_closed_cycles_with_mvps(test_session, mvp_player_id=p1.id, extra_player_id=p2.id)
     _ach04(test_session)
 
     svc = MonthlyMvpService(test_session)
-    svc.close_month(2026, 5, p1.id, "Excelente trabajo durante todo el mes de mayo en el proyecto BE", admin.id)
+    svc.close_month(2026, 5, p1.id, "Excelente trabajo durante todo el mes de mayo en el proyecto BE con 4 ciclos", admin.id)
 
-    svc.edit_monthly_mvp(2026, 5, p2.id, "Corregimos: p2 fue mejor MVP del mes de mayo en este ciclo", admin.id)
+    svc.edit_monthly_mvp(2026, 5, p2.id, "Corregimos: p2 fue mejor MVP del mes de mayo en este ciclo cerrado", admin.id)
 
     # Reversal -10 al anterior (p1)
     reversal = test_session.query(SpAdjustment).filter_by(
@@ -249,11 +278,11 @@ def test_edit_monthly_mvp_expired_window(test_session: Session) -> None:
     """Edición después de 72h hábiles es rechazada."""
     p = _player(test_session, idx=1)
     admin = _admin(test_session)
-    _cycle(test_session, week=22, day_start=25, status="closed", mvp_player_id=p.id)
+    _four_closed_cycles_with_mvps(test_session, mvp_player_id=p.id)
     _ach04(test_session)
 
     svc = MonthlyMvpService(test_session)
-    svc.close_month(2026, 5, p.id, "Excelente trabajo durante todo el mes de mayo en el proyecto BE", admin.id)
+    svc.close_month(2026, 5, p.id, "Excelente trabajo durante todo el mes de mayo en el proyecto BE con 4 ciclos", admin.id)
 
     # Forzar assigned_at en el pasado (>72h hábiles = ~9 días calendario)
     record = test_session.query(MvpMonthly).filter_by(year=2026, month=5).first()
@@ -272,14 +301,14 @@ def test_edit_monthly_mvp_blocking_rule(test_session: Session) -> None:
     p_mvp = _player(test_session, idx=1)
     p_other = _player(test_session, idx=2)
     admin = _admin(test_session)
-    _cycle(test_session, week=22, day_start=25, status="closed", mvp_player_id=p_mvp.id)
+    _four_closed_cycles_with_mvps(test_session, mvp_player_id=p_mvp.id)
     _ach04(test_session)
 
     svc = MonthlyMvpService(test_session)
-    svc.close_month(2026, 5, p_mvp.id, "Excelente trabajo durante todo el mes de mayo en el proyecto BE", admin.id)
+    svc.close_month(2026, 5, p_mvp.id, "Excelente trabajo durante todo el mes de mayo en el proyecto BE con 4 ciclos", admin.id)
 
     with pytest.raises(RuleViolationError):
-        svc.edit_monthly_mvp(2026, 5, p_other.id, "Razón correcta pero player no fue MVP semanal del mes", admin.id)
+        svc.edit_monthly_mvp(2026, 5, p_other.id, "Razón correcta pero player no fue MVP semanal del mes de mayo", admin.id)
 
 
 # ── get_history ───────────────────────────────────────────────────────────────
@@ -288,11 +317,11 @@ def test_edit_monthly_mvp_blocking_rule(test_session: Session) -> None:
 def test_get_history_returns_records(test_session: Session) -> None:
     p = _player(test_session, idx=1)
     admin = _admin(test_session)
-    _cycle(test_session, week=22, day_start=25, status="closed", mvp_player_id=p.id)
+    _four_closed_cycles_with_mvps(test_session, mvp_player_id=p.id)
     _ach04(test_session)
 
     svc = MonthlyMvpService(test_session)
-    svc.close_month(2026, 5, p.id, "Excelente trabajo durante todo el mes de mayo en el proyecto backend", admin.id)
+    svc.close_month(2026, 5, p.id, "Excelente trabajo durante todo el mes de mayo en el proyecto backend con 4 ciclos", admin.id)
 
     history = svc.get_history()
     assert len(history) == 1
@@ -308,7 +337,8 @@ def test_close_month_does_not_touch_cp(test_session: Session) -> None:
     """Cerrar el mes NO modifica cp de ninguna subtask."""
     p = _player(test_session, idx=1)
     admin = _admin(test_session)
-    c = _cycle(test_session, week=22, day_start=25, status="closed", mvp_player_id=p.id)
+    cycles = _four_closed_cycles_with_mvps(test_session, mvp_player_id=p.id)
+    c = cycles[0]
 
     st = Subtask(
         jira_key="YAP-999",
@@ -328,7 +358,7 @@ def test_close_month_does_not_touch_cp(test_session: Session) -> None:
     _ach04(test_session)
 
     svc = MonthlyMvpService(test_session)
-    svc.close_month(2026, 5, p.id, "Excelente trabajo durante todo el mes de mayo en el proyecto backend", admin.id)
+    svc.close_month(2026, 5, p.id, "Excelente trabajo durante todo el mes de mayo en el proyecto backend con 4 ciclos", admin.id)
 
     # CP no cambió
     test_session.refresh(st)

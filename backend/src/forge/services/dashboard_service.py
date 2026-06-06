@@ -7,9 +7,30 @@ from sqlalchemy.orm import Session
 
 from forge.core.exceptions import NotFoundError
 from forge.db.models.cycle import Cycle
+from forge.db.models.epic import Epic
 from forge.db.models.player import Player
 from forge.db.models.project import Project
+from forge.db.models.story import Story
 from forge.db.models.subtask import Subtask
+
+# Apartado helpers (sub-división de YAP derivada del prefijo [XXX] en la épica)
+SIN_APARTADO = "Sin apartado"
+
+
+def _apartado_of_summary(summary: str | None) -> str | None:
+    """Extrae el prefijo [XXX] de un summary de épica.
+
+    Retorna None para prefijos numéricos (Version Containers como [3.0], [2.1]).
+    """
+    if not summary:
+        return None
+    s = summary.strip()
+    if not s.startswith("[") or "]" not in s:
+        return None
+    inner = s[1 : s.index("]")].strip().upper()
+    if not inner or inner[0].isdigit():
+        return None
+    return inner
 from forge.schemas.dashboard import (
     AlertItem,
     AreaProgress,
@@ -61,12 +82,14 @@ class DashboardService:
         self,
         project_code: str | None = None,
         cycle_id: int | None = None,
+        apartado: str | None = None,
     ) -> DashboardResponse:
         """Construye la respuesta completa del dashboard.
 
         Args:
             project_code: Filtro de proyecto (None = todos).
             cycle_id:     Ciclo específico (None = ciclo activo).
+            apartado:     Sub-división YAP (prefijo [XXX] de la épica, o 'Sin apartado').
         """
         cycle = self._get_cycle(cycle_id)
         available_projects = self._get_available_projects()
@@ -80,17 +103,54 @@ class DashboardService:
             )
 
         prev_cycle = self._get_previous_cycle(cycle)
+        # Resuelve story_keys UNA vez para todo el dashboard
+        story_keys = self._story_keys_for_apartado(apartado) if apartado else None
 
         return DashboardResponse(
             cycle=self._build_cycle_header(cycle),
-            kpis=self._build_kpis(cycle, project_code, prev_cycle),
-            area_progress=self._build_area_progress(cycle, project_code),
-            player_status=self._build_player_status(cycle, project_code),
-            alerts=self._build_alerts(cycle, project_code),
+            kpis=self._build_kpis(cycle, project_code, prev_cycle, story_keys),
+            area_progress=self._build_area_progress(cycle, project_code, story_keys),
+            player_status=self._build_player_status(cycle, project_code, story_keys),
+            alerts=self._build_alerts(cycle, project_code, story_keys),
             available_projects=available_projects,
             available_cycles=available_cycles,
-            last_synced_at=self._get_last_sync(cycle.id, project_code),
+            last_synced_at=self._get_last_sync(cycle.id, project_code, story_keys),
         )
+
+    # ──────────────────────────────────────────
+    # Apartado helpers
+    # ──────────────────────────────────────────
+
+    def _story_keys_for_apartado(self, apartado: str) -> frozenset[str]:
+        """Retorna los jira_key de stories que pertenecen al apartado dado.
+
+        Incluye stories sin épica en 'Sin apartado'. Resuelve el prefijo [XXX]
+        del summary de la épica (mismo criterio que analytics_service).
+        """
+        stmt = select(Story.jira_key, Epic.summary).join(
+            Epic, Story.parent_epic_key == Epic.jira_key
+        )
+        rows = self._s.execute(stmt).all()
+
+        sin = apartado == SIN_APARTADO
+        result: set[str] = set()
+        for story_key, epic_summary in rows:
+            prefix = _apartado_of_summary(epic_summary)
+            if sin:
+                if prefix is None:
+                    result.add(story_key)
+            else:
+                if prefix == apartado:
+                    result.add(story_key)
+
+        if sin:
+            # Stories sin épica también son "Sin apartado"
+            no_epic = self._s.scalars(
+                select(Story.jira_key).where(Story.parent_epic_key.is_(None))
+            ).all()
+            result.update(no_epic)
+
+        return frozenset(result)
 
     # ──────────────────────────────────────────
     # Cycle helpers
@@ -142,9 +202,12 @@ class DashboardService:
         cycle: Cycle,
         project_code: str | None,
         prev_cycle: Cycle | None,
+        story_keys: frozenset[str] | None = None,
     ) -> KPICards:
-        cp_done_current = self._cp_done(cycle.id, project_code)
-        cp_done_prev = self._cp_done(prev_cycle.id, project_code) if prev_cycle else None
+        cp_done_current = self._cp_done(cycle.id, project_code, story_keys)
+        cp_done_prev = (
+            self._cp_done(prev_cycle.id, project_code, story_keys) if prev_cycle else None
+        )
         delta = _delta_pct(cp_done_current, cp_done_prev)
 
         return KPICards(
@@ -153,10 +216,12 @@ class DashboardService:
                 previous_value=cp_done_prev,
                 delta_pct=delta,
             ),
-            qa_first_pass=self._qa_first_pass(cycle.id, project_code),
+            qa_first_pass=self._qa_first_pass(cycle.id, project_code, story_keys),
         )
 
-    def _cp_done(self, cycle_id: int, project_code: str | None) -> float:
+    def _cp_done(
+        self, cycle_id: int, project_code: str | None, story_keys: frozenset[str] | None = None
+    ) -> float:
         stmt = (
             select(func.coalesce(func.sum(Subtask.cp), 0))
             .where(Subtask.cycle_id == cycle_id)
@@ -165,9 +230,13 @@ class DashboardService:
         )
         if project_code:
             stmt = stmt.where(Subtask.project_code == project_code)
+        if story_keys is not None:
+            stmt = stmt.where(Subtask.parent_story_key.in_(story_keys))
         return float(self._s.scalar(stmt) or 0)
 
-    def _qa_first_pass(self, cycle_id: int, project_code: str | None) -> QAFirstPass:
+    def _qa_first_pass(
+        self, cycle_id: int, project_code: str | None, story_keys: frozenset[str] | None = None
+    ) -> QAFirstPass:
         """% de subtasks Done en el ciclo que pasaron QA al primer intento."""
         stmt = (
             select(Subtask.qa_first_pass)
@@ -177,6 +246,8 @@ class DashboardService:
         )
         if project_code:
             stmt = stmt.where(Subtask.project_code == project_code)
+        if story_keys is not None:
+            stmt = stmt.where(Subtask.parent_story_key.in_(story_keys))
         rows = self._s.scalars(stmt).all()
         total = len(rows)
         passed = sum(1 for v in rows if v)
@@ -191,12 +262,13 @@ class DashboardService:
         self,
         cycle: Cycle,
         project_code: str | None,
+        story_keys: frozenset[str] | None = None,
     ) -> list[AreaProgress]:
         result = []
         for area in _LEADERBOARD_AREAS:
-            cp_done = self._area_cp_done(cycle.id, area, project_code)
-            active_devs = self._area_live_devs(area, project_code)
-            has_bottleneck = self._area_has_wip_bottleneck(area, project_code)
+            cp_done = self._area_cp_done(cycle.id, area, project_code, story_keys)
+            active_devs = self._area_live_devs(area, project_code, story_keys)
+            has_bottleneck = self._area_has_wip_bottleneck(area, project_code, story_keys)
 
             result.append(
                 AreaProgress(
@@ -208,7 +280,13 @@ class DashboardService:
             )
         return result
 
-    def _area_cp_done(self, cycle_id: int, area: str, project_code: str | None) -> float:
+    def _area_cp_done(
+        self,
+        cycle_id: int,
+        area: str,
+        project_code: str | None,
+        story_keys: frozenset[str] | None = None,
+    ) -> float:
         stmt = (
             select(func.coalesce(func.sum(Subtask.cp), 0))
             .where(Subtask.cycle_id == cycle_id, Subtask.area == area, Subtask.status == _DONE)
@@ -216,9 +294,13 @@ class DashboardService:
         )
         if project_code:
             stmt = stmt.where(Subtask.project_code == project_code)
+        if story_keys is not None:
+            stmt = stmt.where(Subtask.parent_story_key.in_(story_keys))
         return float(self._s.scalar(stmt) or 0)
 
-    def _area_live_devs(self, area: str, project_code: str | None) -> int:
+    def _area_live_devs(
+        self, area: str, project_code: str | None, story_keys: frozenset[str] | None = None
+    ) -> int:
         """Devs con WIP activo AHORA en esta área (sin filtro de ciclo)."""
         stmt = (
             select(func.count(Subtask.assignee_player_id.distinct()))
@@ -230,9 +312,13 @@ class DashboardService:
         )
         if project_code:
             stmt = stmt.where(Subtask.project_code == project_code)
+        if story_keys is not None:
+            stmt = stmt.where(Subtask.parent_story_key.in_(story_keys))
         return int(self._s.scalar(stmt) or 0)
 
-    def _area_has_wip_bottleneck(self, area: str, project_code: str | None) -> bool:
+    def _area_has_wip_bottleneck(
+        self, area: str, project_code: str | None, story_keys: frozenset[str] | None = None
+    ) -> bool:
         """Algún dev del área excede umbral de WIP (en vivo, sin filtro de ciclo)."""
         threshold = _WIP_THRESHOLDS.get(area, _DEFAULT_WIP)
         inner = (
@@ -249,6 +335,8 @@ class DashboardService:
         )
         if project_code:
             inner = inner.where(Subtask.project_code == project_code)
+        if story_keys is not None:
+            inner = inner.where(Subtask.parent_story_key.in_(story_keys))
         rows = self._s.execute(inner).all()
         return any(r.wip > threshold for r in rows)
 
@@ -260,6 +348,7 @@ class DashboardService:
         self,
         cycle: Cycle,
         project_code: str | None,
+        story_keys: frozenset[str] | None = None,
     ) -> list[PlayerStatus]:
         """Retorna TODOS los devs activos con WIP en vivo + done del ciclo."""
         players_stmt = select(Player).where(Player.is_active.is_(True))
@@ -267,9 +356,9 @@ class DashboardService:
 
         result: list[PlayerStatus] = []
         for player in players:
-            wip = self._player_wip_live(player.id, project_code)
-            done_count = self._player_done_count(cycle.id, player.id, project_code)
-            status = self._player_status_label(player.id, player.area, wip, project_code)
+            wip = self._player_wip_live(player.id, project_code, story_keys)
+            done_count = self._player_done_count(cycle.id, player.id, project_code, story_keys)
+            status = self._player_status_label(player.id, player.area, wip, project_code, story_keys)
 
             result.append(
                 PlayerStatus(
@@ -285,7 +374,9 @@ class DashboardService:
 
         return sorted(result, key=lambda p: (p.wip_live == 0, -p.done_subtasks))
 
-    def _player_wip_live(self, player_id: int, project_code: str | None) -> int:
+    def _player_wip_live(
+        self, player_id: int, project_code: str | None, story_keys: frozenset[str] | None = None
+    ) -> int:
         """WIP en vivo del dev (sin filtro de ciclo)."""
         stmt = (
             select(func.count())
@@ -297,10 +388,16 @@ class DashboardService:
         )
         if project_code:
             stmt = stmt.where(Subtask.project_code == project_code)
+        if story_keys is not None:
+            stmt = stmt.where(Subtask.parent_story_key.in_(story_keys))
         return int(self._s.scalar(stmt) or 0)
 
     def _player_done_count(
-        self, cycle_id: int, player_id: int, project_code: str | None
+        self,
+        cycle_id: int,
+        player_id: int,
+        project_code: str | None,
+        story_keys: frozenset[str] | None = None,
     ) -> int:
         stmt = (
             select(func.count())
@@ -313,6 +410,8 @@ class DashboardService:
         )
         if project_code:
             stmt = stmt.where(Subtask.project_code == project_code)
+        if story_keys is not None:
+            stmt = stmt.where(Subtask.parent_story_key.in_(story_keys))
         return int(self._s.scalar(stmt) or 0)
 
     def _player_status_label(
@@ -321,6 +420,7 @@ class DashboardService:
         area: str,
         wip_live: int,
         project_code: str | None,
+        story_keys: frozenset[str] | None = None,
     ) -> str:
         if wip_live == 0:
             return "inactive"
@@ -335,6 +435,8 @@ class DashboardService:
         )
         if project_code:
             blocked_stmt = blocked_stmt.where(Subtask.project_code == project_code)
+        if story_keys is not None:
+            blocked_stmt = blocked_stmt.where(Subtask.parent_story_key.in_(story_keys))
         blocked_count = int(self._s.scalar(blocked_stmt) or 0)
 
         if blocked_count >= wip_live:
@@ -354,15 +456,18 @@ class DashboardService:
         self,
         cycle: Cycle,
         project_code: str | None,
+        story_keys: frozenset[str] | None = None,
     ) -> list[AlertItem]:
         alerts: list[AlertItem] = []
-        alerts.extend(self._alerts_abandoned(cycle, project_code))
-        alerts.extend(self._alerts_waiting_long(cycle, project_code))
-        alerts.extend(self._alerts_cp_pending(cycle, project_code))
-        alerts.extend(self._alerts_wip_exceeded(cycle, project_code))
+        alerts.extend(self._alerts_abandoned(cycle, project_code, story_keys))
+        alerts.extend(self._alerts_waiting_long(cycle, project_code, story_keys))
+        alerts.extend(self._alerts_cp_pending(cycle, project_code, story_keys))
+        alerts.extend(self._alerts_wip_exceeded(cycle, project_code, story_keys))
         return alerts
 
-    def _alerts_abandoned(self, cycle: Cycle, project_code: str | None) -> list[AlertItem]:
+    def _alerts_abandoned(
+        self, cycle: Cycle, project_code: str | None, story_keys: frozenset[str] | None = None
+    ) -> list[AlertItem]:
         cutoff = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=_ABANDONED_DAYS)
         stmt = (
             select(Subtask.jira_key, Subtask.assignee_player_id)
@@ -374,6 +479,8 @@ class DashboardService:
         )
         if project_code:
             stmt = stmt.where(Subtask.project_code == project_code)
+        if story_keys is not None:
+            stmt = stmt.where(Subtask.parent_story_key.in_(story_keys))
         rows = self._s.execute(stmt).all()
         return [
             AlertItem(
@@ -386,7 +493,9 @@ class DashboardService:
             for r in rows
         ]
 
-    def _alerts_waiting_long(self, cycle: Cycle, project_code: str | None) -> list[AlertItem]:
+    def _alerts_waiting_long(
+        self, cycle: Cycle, project_code: str | None, story_keys: frozenset[str] | None = None
+    ) -> list[AlertItem]:
         """Subtasks bloqueadas/en espera con >18h hábiles acumuladas."""
         stmt = (
             select(Subtask.jira_key, Subtask.assignee_player_id)
@@ -397,6 +506,8 @@ class DashboardService:
         )
         if project_code:
             stmt = stmt.where(Subtask.project_code == project_code)
+        if story_keys is not None:
+            stmt = stmt.where(Subtask.parent_story_key.in_(story_keys))
         rows = self._s.execute(stmt).all()
         return [
             AlertItem(
@@ -409,7 +520,9 @@ class DashboardService:
             for r in rows
         ]
 
-    def _alerts_cp_pending(self, cycle: Cycle, project_code: str | None) -> list[AlertItem]:
+    def _alerts_cp_pending(
+        self, cycle: Cycle, project_code: str | None, story_keys: frozenset[str] | None = None
+    ) -> list[AlertItem]:
         """L/XL sin CP aprobado."""
         stmt = (
             select(Subtask.jira_key, Subtask.assignee_player_id)
@@ -421,6 +534,8 @@ class DashboardService:
         )
         if project_code:
             stmt = stmt.where(Subtask.project_code == project_code)
+        if story_keys is not None:
+            stmt = stmt.where(Subtask.parent_story_key.in_(story_keys))
         rows = self._s.execute(stmt).all()
         return [
             AlertItem(
@@ -433,7 +548,9 @@ class DashboardService:
             for r in rows
         ]
 
-    def _alerts_wip_exceeded(self, cycle: Cycle, project_code: str | None) -> list[AlertItem]:
+    def _alerts_wip_exceeded(
+        self, cycle: Cycle, project_code: str | None, story_keys: frozenset[str] | None = None
+    ) -> list[AlertItem]:
         """Devs que superan su umbral de WIP (en vivo, sin filtro de ciclo)."""
         alerts: list[AlertItem] = []
         for area in _LEADERBOARD_AREAS:
@@ -452,6 +569,8 @@ class DashboardService:
             )
             if project_code:
                 wip_stmt = wip_stmt.where(Subtask.project_code == project_code)
+            if story_keys is not None:
+                wip_stmt = wip_stmt.where(Subtask.parent_story_key.in_(story_keys))
             for row in self._s.execute(wip_stmt):
                 if row.wip > threshold:
                     player = self._s.get(Player, row.assignee_player_id)
@@ -499,11 +618,18 @@ class DashboardService:
             for c in cycles
         ]
 
-    def _get_last_sync(self, cycle_id: int, project_code: str | None) -> datetime | None:
+    def _get_last_sync(
+        self,
+        cycle_id: int,
+        project_code: str | None,
+        story_keys: frozenset[str] | None = None,
+    ) -> datetime | None:
         """Max(last_synced_at) del ciclo. Si no hay datos, devuelve el global."""
         stmt = select(func.max(Subtask.last_synced_at)).where(Subtask.cycle_id == cycle_id)
         if project_code:
             stmt = stmt.where(Subtask.project_code == project_code)
+        if story_keys is not None:
+            stmt = stmt.where(Subtask.parent_story_key.in_(story_keys))
         result = self._s.scalar(stmt)
         if result is None:
             result = self._s.scalar(select(func.max(Subtask.last_synced_at)))

@@ -173,3 +173,72 @@ export interface CanonicalTimeResponse {
   area_filter: string | null;
   rows: CanonicalTimeRow[];
 }
+
+// --- WP-17b: apartado, cycle/lead time, métricas por dev ---
+
+export type CycleLeadGrouping = "cycle" | "month" | "historical";
+
+export interface ApartadoOption {
+  apartado: string;
+  subtask_count: number;
+}
+
+export interface ApartadosResponse {
+  apartados: ApartadoOption[];
+}
+
+export interface CycleLeadStats {
+  done_count: number;
+  cycle_avg_h: number | null;
+  cycle_median_h: number | null;
+  lead_avg_h: number | null;
+  lead_median_h: number | null;
+}
+
+export interface CycleLeadPeriod extends CycleLeadStats {
+  key: string;
+  label: string;
+  cycle_id: number | null;
+}
+
+export interface CycleLeadTimeResponse {
+  grouping: CycleLeadGrouping;
+  apartado: string | null;
+  area: string | null;
+  periods: CycleLeadPeriod[];
+  overall: CycleLeadStats;
+}
+
+export interface DevListItem {
+  player_id: number;
+  display_name: string;
+  area: string;
+  done_count: number;
+}
+
+export interface DevListResponse {
+  devs: DevListItem[];
+}
+
+export interface DevStateRow {
+  status: string;
+  canonical: string | null;
+  avg_h: number;
+  total_h: number;
+  n: number;
+}
+
+export interface DevMetricsResponse {
+  player_id: number;
+  display_name: string;
+  area: string;
+  is_aggregate: boolean;
+  scope: string;
+  apartado: string | null;
+  done_count: number;
+  cycle_avg_h: number | null;
+  lead_avg_h: number | null;
+  qa_first_pass_pct: number | null;
+  raw_states: DevStateRow[];
+  canonical_states: DevStateRow[];
+}

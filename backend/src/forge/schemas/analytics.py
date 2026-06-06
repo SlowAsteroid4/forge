@@ -216,3 +216,95 @@ class CanonicalTimeResponse(BaseModel):
     group_by: str
     area_filter: str | None = None
     rows: list[CanonicalTimeRow]
+
+
+# ──────────────────────────────────────────────────────────────
+# WP-17b — apartado, cycle/lead time, métricas por dev
+# ──────────────────────────────────────────────────────────────
+
+
+class ApartadoOption(BaseModel):
+    """Un apartado (sub-división de YAP) con su conteo de subtasks."""
+
+    apartado: str
+    subtask_count: int
+
+
+class ApartadosResponse(BaseModel):
+    """Apartados disponibles para el filtro (incluye 'Sin apartado')."""
+
+    apartados: list[ApartadoOption]
+
+
+class CycleLeadStats(BaseModel):
+    """Cycle/Lead time agregados de un conjunto de subtasks Done."""
+
+    done_count: int
+    cycle_avg_h: float | None = None
+    cycle_median_h: float | None = None
+    lead_avg_h: float | None = None
+    lead_median_h: float | None = None
+
+
+class CycleLeadPeriod(CycleLeadStats):
+    """Un periodo (ciclo / mes) en la serie de cycle/lead time."""
+
+    key: str
+    label: str
+    cycle_id: int | None = None
+
+
+class CycleLeadTimeResponse(BaseModel):
+    """Cycle time (In Progress→Done) y Lead time (Backlog→Done) en horas hábiles.
+
+    Detección canónica desde raw_changelog (no reusa ct/lt de WP-07h). `overall` es
+    el agregado histórico de todo el conjunto filtrado.
+    """
+
+    grouping: str
+    apartado: str | None = None
+    area: str | None = None
+    periods: list[CycleLeadPeriod]
+    overall: CycleLeadStats
+
+
+class DevListItem(BaseModel):
+    """Un dev con subtasks Done (para el selector)."""
+
+    player_id: int
+    display_name: str
+    area: str
+    done_count: int
+
+
+class DevListResponse(BaseModel):
+    """Devs disponibles para métricas por dev."""
+
+    devs: list[DevListItem]
+
+
+class DevStateRow(BaseModel):
+    """Tiempo promedio de un dev en un estado (crudo o canónico)."""
+
+    status: str
+    canonical: str | None = None
+    avg_h: float
+    total_h: float
+    n: int = Field(description="Subtasks que pasaron por este estado")
+
+
+class DevMetricsResponse(BaseModel):
+    """Métricas promedio de un dev: tiempo por estado crudo (37) y canónico (9)."""
+
+    player_id: int
+    display_name: str
+    area: str
+    is_aggregate: bool = Field(description="True para cuentas-grupo (Equipo de Producto)")
+    scope: str
+    apartado: str | None = None
+    done_count: int
+    cycle_avg_h: float | None = None
+    lead_avg_h: float | None = None
+    qa_first_pass_pct: float | None = None
+    raw_states: list[DevStateRow]
+    canonical_states: list[DevStateRow]

@@ -8,6 +8,8 @@ import type {
   QualitySummaryResponse,
   QaFirstPassVsPreviousResponse,
   CanonicalTimeResponse,
+  ApartadosResponse,
+  DevListResponse,
 } from "@/lib/types/analytics";
 import { BottleneckHero, DELIVERY_AREAS } from "@/components/ops/analytics/bottleneck-hero";
 import { CanonicalTimeBars } from "@/components/ops/analytics/canonical-time-bars";
@@ -17,6 +19,9 @@ import { CpPerDayChart } from "@/components/ops/analytics/cp-per-day-chart";
 import { QualityCards } from "@/components/ops/analytics/quality-cards";
 import { QaFirstPassVsPrevious } from "@/components/ops/analytics/qa-first-pass-vs-previous";
 import { ScopeSelector } from "@/components/ops/analytics/scope-selector";
+import { ApartadoFilter } from "@/components/ops/analytics/apartado-filter";
+import { CycleLeadChart } from "@/components/ops/analytics/cycle-lead-chart";
+import { DevMetricsPanel } from "@/components/ops/analytics/dev-metrics-panel";
 
 export const dynamic = "force-dynamic";
 
@@ -33,15 +38,19 @@ async function fetchJson<T>(url: string): Promise<T | null> {
 }
 
 interface PageProps {
-  searchParams: Promise<{ scope?: string }>;
+  searchParams: Promise<{ scope?: string; apartado?: string }>;
 }
 
 export default async function AnalyticsFlowPage({ searchParams }: PageProps) {
-  const { scope: rawScope } = await searchParams;
+  const { scope: rawScope, apartado: rawApartado } = await searchParams;
   const scope: AnalyticsScope =
     rawScope === "cycle" || rawScope === "window" || rawScope === "historical"
       ? rawScope
       : "window";
+
+  // Filtro GLOBAL por apartado (sub-división de YAP). null = todos.
+  const apartado = rawApartado && rawApartado.trim() ? rawApartado : null;
+  const apQ = apartado ? `&apartado=${encodeURIComponent(apartado)}` : "";
 
   // Endpoints CP no soportan historical — fallback a window
   const partialScope = scope === "historical" ? "window" : scope;
@@ -58,21 +67,29 @@ export default async function AnalyticsFlowPage({ searchParams }: PageProps) {
     qaVsPrev,
     canonByArea,
     canonDesign,
+    apartados,
+    devList,
   ] = await Promise.all([
-    fetchJson<ThroughputResponse>(`${API_BASE}/analytics/throughput?last_n=${lastN}`),
-    fetchJson<CpByAreaResponse>(`${API_BASE}/analytics/cp-by-area?scope=${partialScope}`),
-    fetchJson<CpPerDayResponse>(`${API_BASE}/analytics/cp-per-day-by-dev?scope=${partialScope}`),
+    fetchJson<ThroughputResponse>(`${API_BASE}/analytics/throughput?last_n=${lastN}${apQ}`),
+    fetchJson<CpByAreaResponse>(`${API_BASE}/analytics/cp-by-area?scope=${partialScope}${apQ}`),
+    fetchJson<CpPerDayResponse>(
+      `${API_BASE}/analytics/cp-per-day-by-dev?scope=${partialScope}${apQ}`,
+    ),
     fetchJson<TimeInStatusDetailResponse>(
-      `${API_BASE}/analytics/time-in-status-detail?scope=${scope}&group_by=area`,
+      `${API_BASE}/analytics/time-in-status-detail?scope=${scope}&group_by=area${apQ}`,
     ),
-    fetchJson<QualitySummaryResponse>(`${API_BASE}/analytics/quality`),
-    fetchJson<QaFirstPassVsPreviousResponse>(`${API_BASE}/analytics/qa-first-pass-vs-previous`),
+    fetchJson<QualitySummaryResponse>(`${API_BASE}/analytics/quality?${apQ.slice(1)}`),
+    fetchJson<QaFirstPassVsPreviousResponse>(
+      `${API_BASE}/analytics/qa-first-pass-vs-previous?${apQ.slice(1)}`,
+    ),
     fetchJson<CanonicalTimeResponse>(
-      `${API_BASE}/analytics/time-canonical?scope=${scope}&group_by=area`,
+      `${API_BASE}/analytics/time-canonical?scope=${scope}&group_by=area${apQ}`,
     ),
     fetchJson<CanonicalTimeResponse>(
-      `${API_BASE}/analytics/time-canonical?scope=${scope}&group_by=player&area=DESIGN`,
+      `${API_BASE}/analytics/time-canonical?scope=${scope}&group_by=player&area=DESIGN${apQ}`,
     ),
+    fetchJson<ApartadosResponse>(`${API_BASE}/analytics/apartados`),
+    fetchJson<DevListResponse>(`${API_BASE}/analytics/dev-list?scope=${scope}${apQ}`),
   ]);
 
   const scopeLabel =
@@ -81,16 +98,24 @@ export default async function AnalyticsFlowPage({ searchParams }: PageProps) {
   return (
     <div className="flex flex-col flex-1 overflow-auto">
       {/* Header */}
-      <div className="border-b border-border px-6 py-4 flex items-center justify-between gap-4">
+      <div className="border-b border-border px-6 py-4 flex items-start justify-between gap-4 flex-wrap">
         <div>
           <h1 className="text-base font-semibold">Métricas de flujo</h1>
           <p className="text-xs text-muted-foreground">
-            {scopeLabel} — calidad, cuellos de botella, throughput
+            {scopeLabel}
+            {apartado ? ` · ${apartado}` : ""} — calidad, cuellos de botella, tiempos
           </p>
         </div>
-        <Suspense>
-          <ScopeSelector currentScope={scope} />
-        </Suspense>
+        <div className="flex items-center gap-2 flex-wrap">
+          {apartados && apartados.apartados.length > 0 && (
+            <Suspense>
+              <ApartadoFilter options={apartados.apartados} current={apartado} />
+            </Suspense>
+          )}
+          <Suspense>
+            <ScopeSelector currentScope={scope} />
+          </Suspense>
+        </div>
       </div>
 
       <div className="flex-1 p-6 space-y-8">
@@ -154,6 +179,32 @@ export default async function AnalyticsFlowPage({ searchParams }: PageProps) {
               />
             ) : (
               <ErrorCard title="Tiempos de Diseño" />
+            )}
+          </div>
+        </section>
+
+        {/* ───────── CYCLE / LEAD TIME ───────── */}
+        <section>
+          <SectionHeader
+            title="Cycle time & Lead time"
+            subtitle="Cycle (In Progress→Done) y Lead (Backlog→Done) en horas hábiles. Cycle recalculado canónicamente desde el changelog; lead desde la creación real."
+          />
+          <div className="rounded-lg border border-border bg-card p-4">
+            <CycleLeadChart apartado={apartado} />
+          </div>
+        </section>
+
+        {/* ───────── MÉTRICAS POR DEV ───────── */}
+        <section>
+          <SectionHeader
+            title="Métricas por dev"
+            subtitle="Selecciona un dev: cycle/lead/QA + tiempo promedio por estado crudo (Jira) y canónico (los 9 del Manifiesto)."
+          />
+          <div className="rounded-lg border border-border bg-card p-4">
+            {devList ? (
+              <DevMetricsPanel devs={devList.devs} scope={scope} apartado={apartado} />
+            ) : (
+              <ErrorCard title="Métricas por dev" />
             )}
           </div>
         </section>

@@ -4,16 +4,19 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
+from statistics import median
 from typing import Any
 
-from sqlalchemy import case, func, select
+from sqlalchemy import ColumnElement, case, func, or_, select
 from sqlalchemy.orm import Session
 
 from forge.core.time_utils import business_hours
 from forge.db.models.cycle import Cycle
+from forge.db.models.epic import Epic
 from forge.db.models.player import Player
+from forge.db.models.story import Story
 from forge.db.models.subtask import Subtask
-from forge.services.canonical_status import BUCKET_TO_CANONICAL
+from forge.services.canonical_status import BUCKET_TO_CANONICAL, canonical_of
 
 # Estados crudos (tal como se almacenan) que representan cola de QA pendiente.
 _QA_PENDING_STATUSES = ["In QA", "Ready for QA"]
@@ -24,6 +27,12 @@ _CYCLE_BIZ_DAYS = 5  # Cada ciclo = Lun–Vie
 
 # Áreas con subtasks (leaderboard)
 _DEV_AREAS = frozenset({"BE", "FE", "DESIGN", "DB", "QA"})
+
+# WP-17b — Apartado (sub-división dentro de YAP, codificada como prefijo [XXX]
+# del summary de la épica). Las subtasks sin prefijo de apartado caen aquí, como
+# categoría de primera clase (no se esconden): 36% del dato vive bajo épicas
+# "Version Container" de release, que no llevan prefijo de área.
+SIN_APARTADO = "Sin apartado"
 
 
 class AnalyticsService:
@@ -40,7 +49,9 @@ class AnalyticsService:
     # API pública
     # ──────────────────────────────────────────────────────────────
 
-    def throughput_by_cycle(self, last_n: int = 8) -> list[dict[str, Any]]:
+    def throughput_by_cycle(
+        self, last_n: int = 8, apartado: str | None = None
+    ) -> list[dict[str, Any]]:
         """CP y subtasks Done por ciclo (serie temporal, N ciclos más recientes).
 
         Incluye ciclos activos y cerrados/archivados. Orden: más reciente primero.
@@ -56,13 +67,15 @@ class AnalyticsService:
             .all()
         )
 
+        ap = self._apartado_filter(apartado)
+        ap_filter = [ap] if ap is not None else []
         result = []
         for cycle in cycles:
             done_count, total_cp = self._s.execute(
                 select(
                     func.count(Subtask.jira_key),
                     func.coalesce(func.sum(Subtask.cp), 0),
-                ).where(Subtask.cycle_id == cycle.id, Subtask.status == _DONE)
+                ).where(Subtask.cycle_id == cycle.id, Subtask.status == _DONE, *ap_filter)
             ).one()
 
             result.append(
@@ -85,24 +98,28 @@ class AnalyticsService:
         self,
         scope: str = "cycle",
         cycle_id: int | None = None,
+        apartado: str | None = None,
     ) -> list[dict[str, Any]]:
         """CP Done agrupado por área técnica.
 
         Args:
             scope: 'cycle' (ciclo activo/especificado) | 'window' (4 ciclos cerrados).
             cycle_id: ID del ciclo (solo aplica si scope='cycle'; None = activo).
+            apartado: filtra por apartado (incluye 'Sin apartado').
         """
         cycle_ids = self._resolve_cycle_ids(scope, cycle_id)
         if not cycle_ids:
             return []
 
+        ap = self._apartado_filter(apartado)
+        ap_filter = [ap] if ap is not None else []
         rows = self._s.execute(
             select(
                 Subtask.area,
                 func.count(Subtask.jira_key).label("done_count"),
                 func.coalesce(func.sum(Subtask.cp), 0).label("total_cp"),
             )
-            .where(Subtask.cycle_id.in_(cycle_ids), Subtask.status == _DONE)
+            .where(Subtask.cycle_id.in_(cycle_ids), Subtask.status == _DONE, *ap_filter)
             .group_by(Subtask.area)
             .order_by(func.coalesce(func.sum(Subtask.cp), 0).desc())
         ).all()
@@ -116,7 +133,9 @@ class AnalyticsService:
             for row in rows
         ]
 
-    def cp_per_day_by_dev(self, scope: str = "cycle") -> list[dict[str, Any]]:
+    def cp_per_day_by_dev(
+        self, scope: str = "cycle", apartado: str | None = None
+    ) -> list[dict[str, Any]]:
         """CP Done dividido por días hábiles del scope, por dev.
 
         Útil para comparar productividad normalizada entre devs con distinto tiempo activo.
@@ -131,6 +150,8 @@ class AnalyticsService:
 
         biz_days = len(cycle_ids) * _CYCLE_BIZ_DAYS
 
+        ap = self._apartado_filter(apartado)
+        ap_filter = [ap] if ap is not None else []
         rows = self._s.execute(
             select(
                 Player.id,
@@ -144,6 +165,7 @@ class AnalyticsService:
                 Subtask.cycle_id.in_(cycle_ids),
                 Subtask.status == _DONE,
                 Player.area.in_(_DEV_AREAS),
+                *ap_filter,
             )
             .group_by(Player.id)
             .order_by(func.coalesce(func.sum(Subtask.cp), 0).desc())
@@ -251,6 +273,7 @@ class AnalyticsService:
         self,
         group_by: str = "area",
         scope: str = "window",
+        apartado: str | None = None,
     ) -> list[dict[str, Any]]:
         """Horas por estado Jira específico (parsea raw_changelog).
 
@@ -265,6 +288,9 @@ class AnalyticsService:
             if not cycle_ids:
                 return []
             filters.append(Subtask.cycle_id.in_(cycle_ids))
+        ap = self._apartado_filter(apartado)
+        if ap is not None:
+            filters.append(ap)
 
         if group_by == "area":
             return self._detail_by_area(filters)
@@ -274,7 +300,9 @@ class AnalyticsService:
     # WP-17a: Quality, comparativas vs ciclo anterior, agrupación canónica
     # ──────────────────────────────────────────────────────────────
 
-    def quality_summary(self, cycle_id: int | None = None) -> dict[str, Any]:
+    def quality_summary(
+        self, cycle_id: int | None = None, apartado: str | None = None
+    ) -> dict[str, Any]:
         """Métricas de Quality del ciclo de referencia + delta vs ciclo anterior.
 
         Métricas (read-only, derivadas de buckets WP-07h sin tocarlos):
@@ -291,9 +319,9 @@ class AnalyticsService:
                     "tested": _empty_metric(), "pending": _empty_metric(),
                     "avg_qa_hours": _empty_metric()}
 
-        cur = self._quality_for_cycle(ref.id)
+        cur = self._quality_for_cycle(ref.id, apartado)
         prev_cycle = self._previous_closed_cycle(ref)
-        prev = self._quality_for_cycle(prev_cycle.id) if prev_cycle else None
+        prev = self._quality_for_cycle(prev_cycle.id, apartado) if prev_cycle else None
 
         return {
             "reference_cycle": _cycle_brief(ref),
@@ -305,7 +333,9 @@ class AnalyticsService:
             ),
         }
 
-    def qa_first_pass_vs_previous(self, cycle_id: int | None = None) -> dict[str, Any]:
+    def qa_first_pass_vs_previous(
+        self, cycle_id: int | None = None, apartado: str | None = None
+    ) -> dict[str, Any]:
         """QA first-pass por dev en el ciclo de referencia vs el ciclo anterior.
 
         Devuelve por dev: pct actual, pct anterior (o None) y delta en puntos.
@@ -316,8 +346,8 @@ class AnalyticsService:
             return {"reference_cycle": None, "previous_cycle": None, "devs": []}
 
         prev_cycle = self._previous_closed_cycle(ref)
-        cur_map = self._qa_first_pass_for_cycle(ref.id)
-        prev_map = self._qa_first_pass_for_cycle(prev_cycle.id) if prev_cycle else {}
+        cur_map = self._qa_first_pass_for_cycle(ref.id, apartado)
+        prev_map = self._qa_first_pass_for_cycle(prev_cycle.id, apartado) if prev_cycle else {}
 
         devs = []
         for pid, cur in sorted(cur_map.items(), key=lambda kv: -kv[1]["first_pass_pct"]):
@@ -351,6 +381,7 @@ class AnalyticsService:
         group_by: str = "area",
         scope: str = "window",
         area_filter: str | None = None,
+        apartado: str | None = None,
     ) -> list[dict[str, Any]]:
         """Horas por estado CANÓNICO (Manifiesto JPDS), agrupado por área o dev.
 
@@ -373,6 +404,9 @@ class AnalyticsService:
             filters.append(Subtask.cycle_id.in_(cycle_ids))
         if area_filter:
             filters.append(Subtask.area == area_filter)
+        ap = self._apartado_filter(apartado)
+        if ap is not None:
+            filters.append(ap)
 
         base = self._time_by_area(filters) if group_by == "area" else self._time_by_player(filters)
 
@@ -402,8 +436,340 @@ class AnalyticsService:
         return out
 
     # ──────────────────────────────────────────────────────────────
+    # WP-17b: cycle/lead time, filtro por apartado, métricas por dev
+    # ──────────────────────────────────────────────────────────────
+
+    def apartados(self) -> list[dict[str, Any]]:
+        """Lista de apartados detectados (prefijo [XXX] de la épica) + conteo de subtasks.
+
+        Incluye SIEMPRE 'Sin apartado' como categoría de primera clase si hay subtasks
+        sin prefijo. Orden: apartados reales por conteo desc, 'Sin apartado' al final.
+        """
+        smap = self._story_apartado_map()
+        story_keys = self._s.execute(select(Subtask.parent_story_key)).scalars().all()
+
+        counts: dict[str, int] = {}
+        for sk in story_keys:
+            ap = smap.get(sk, SIN_APARTADO) if sk else SIN_APARTADO
+            counts[ap] = counts.get(ap, 0) + 1
+
+        real = sorted(
+            ((a, n) for a, n in counts.items() if a != SIN_APARTADO),
+            key=lambda kv: -kv[1],
+        )
+        result = [{"apartado": a, "subtask_count": n} for a, n in real]
+        if SIN_APARTADO in counts:
+            result.append({"apartado": SIN_APARTADO, "subtask_count": counts[SIN_APARTADO]})
+        return result
+
+    def dev_list(
+        self, apartado: str | None = None, scope: str = "historical"
+    ) -> list[dict[str, Any]]:
+        """Devs con subtasks Done en el scope (para el selector de métricas por dev).
+
+        Filtra por el mismo scope que las métricas (cycle/window/historical) para no
+        listar devs sin datos en el horizonte activo. Orden: más activos primero.
+        """
+        filters: list[Any] = [Subtask.status == _DONE, Subtask.assignee_player_id.is_not(None)]
+        if scope in ("cycle", "window"):
+            cycle_ids = self._resolve_cycle_ids(scope)
+            if not cycle_ids:
+                return []
+            filters.append(Subtask.cycle_id.in_(cycle_ids))
+        ap = self._apartado_filter(apartado)
+        if ap is not None:
+            filters.append(ap)
+
+        rows = self._s.execute(
+            select(
+                Player.id,
+                Player.display_name,
+                Player.area,
+                func.count(Subtask.jira_key).label("done_count"),
+            )
+            .join(Player, Subtask.assignee_player_id == Player.id)
+            .where(*filters)
+            .group_by(Player.id)
+            .order_by(func.count(Subtask.jira_key).desc(), Player.display_name)
+        ).all()
+        return [
+            {
+                "player_id": r.id,
+                "display_name": r.display_name,
+                "area": r.area,
+                "done_count": r.done_count,
+            }
+            for r in rows
+        ]
+
+    def cycle_lead_time(
+        self,
+        grouping: str = "cycle",
+        apartado: str | None = None,
+        area: str | None = None,
+    ) -> dict[str, Any]:
+        """Cycle time (In Progress→Done) y Lead time (Backlog/created→Done) en horas hábiles.
+
+        CYCLE = In Progress→Done recalculado canónicamente desde raw_changelog (el changelog
+        tiene crudos 'UI'/'Implementation'/'En progreso'… que mapean a 'In Progress'). LEAD =
+        Backlog/creación→Done reusando `lt_biz_hours` de WP-07h, porque la fecha de creación
+        REAL de Jira no vive en raw_changelog y `created_at` de la BD es la fecha de import.
+        Ninguno toca/escribe los buckets de WP-07h (read-only).
+
+        Args:
+            grouping: 'cycle' (por ciclo) | 'month' (por mes de done_at) | 'historical' (1 bucket).
+            apartado: filtra por apartado (incluye 'Sin apartado').
+            area: filtra por área técnica.
+        """
+        filters: list[Any] = [Subtask.status == _DONE, Subtask.raw_changelog.is_not(None)]
+        if area:
+            filters.append(Subtask.area == area)
+        ap = self._apartado_filter(apartado)
+        if ap is not None:
+            filters.append(ap)
+
+        rows = self._s.execute(
+            select(
+                Subtask.cycle_id,
+                Subtask.done_at,
+                Subtask.lt_biz_hours,
+                Subtask.raw_changelog,
+            ).where(*filters)
+        ).all()
+
+        # Acumula (cycle_h, lead_h) por clave de periodo.
+        buckets: dict[str, list[tuple[float | None, float | None]]] = {}
+        overall: list[tuple[float | None, float | None]] = []
+        for r in rows:
+            cyc_h = _canonical_cycle_hours(r.raw_changelog, r.done_at)
+            lead_h = r.lt_biz_hours
+            overall.append((cyc_h, lead_h))
+            if grouping == "month":
+                key = r.done_at.strftime("%Y-%m") if r.done_at else "sin-fecha"
+            elif grouping == "historical":
+                key = "historical"
+            else:  # cycle
+                key = str(r.cycle_id) if r.cycle_id is not None else "sin-ciclo"
+            buckets.setdefault(key, []).append((cyc_h, lead_h))
+
+        periods: list[dict[str, Any]] = [
+            p
+            for k, vals in buckets.items()
+            if (p := self._period_stats(k, vals, grouping)) is not None
+        ]
+        periods.sort(key=lambda p: p["sort_key"])
+
+        return {
+            "grouping": grouping,
+            "apartado": apartado,
+            "area": area,
+            "periods": periods,
+            "overall": self._aggregate_stats(overall),
+        }
+
+    def dev_metrics(
+        self,
+        player_id: int,
+        scope: str = "historical",
+        apartado: str | None = None,
+    ) -> dict[str, Any] | None:
+        """Métricas promedio de un dev: tiempo por estado crudo (37) y canónico (9).
+
+        - raw_states: horas hábiles promedio en cada estado crudo de Jira por el que
+          pasaron sus subtasks Done (parseo de raw_changelog, como time_in_status_detail).
+        - canonical_states: lo mismo agregado a los 9 canónicos vía CANONICAL_STATUS_MAP.
+        - cycle/lead promedio, qa first-pass %, throughput (done_count).
+
+        Funciona igual para 'Equipo de Producto' (cuenta-grupo, WP-15) → is_aggregate=True.
+        """
+        player = self._s.get(Player, player_id)
+        if player is None:
+            return None
+
+        filters: list[Any] = [
+            Subtask.status == _DONE,
+            Subtask.assignee_player_id == player_id,
+            Subtask.raw_changelog.is_not(None),
+        ]
+        if scope in ("cycle", "window"):
+            cycle_ids = self._resolve_cycle_ids(scope)
+            if not cycle_ids:
+                return self._empty_dev_metrics(player, scope, apartado)
+            filters.append(Subtask.cycle_id.in_(cycle_ids))
+        ap = self._apartado_filter(apartado)
+        if ap is not None:
+            filters.append(ap)
+
+        rows = self._s.execute(
+            select(
+                Subtask.done_at,
+                Subtask.lt_biz_hours,
+                Subtask.qa_first_pass,
+                Subtask.raw_changelog,
+            ).where(*filters)
+        ).all()
+
+        if not rows:
+            return self._empty_dev_metrics(player, scope, apartado)
+
+        # Tiempo por estado crudo (sum + n subtasks que pasaron por él) → promedio.
+        raw_sum: dict[str, float] = {}
+        raw_n: dict[str, int] = {}
+        cycles: list[float] = []
+        leads: list[float] = []
+        qa_total = 0
+        qa_passed = 0
+        for r in rows:
+            per_status = _parse_time_per_status(r.raw_changelog)
+            for status, hours in per_status.items():
+                raw_sum[status] = raw_sum.get(status, 0.0) + hours
+                raw_n[status] = raw_n.get(status, 0) + 1
+            cyc_h = _canonical_cycle_hours(r.raw_changelog, r.done_at)
+            if cyc_h is not None:
+                cycles.append(cyc_h)
+            if r.lt_biz_hours is not None:
+                leads.append(r.lt_biz_hours)
+            if r.qa_first_pass is not None:
+                qa_total += 1
+                if r.qa_first_pass:
+                    qa_passed += 1
+
+        # Agregación canónica: sumar crudos por su canónico.
+        canon_sum: dict[str, float] = {}
+        canon_n: dict[str, int] = {}
+        for status in raw_sum:
+            canon = canonical_of(status)
+            canon_sum[canon] = canon_sum.get(canon, 0.0) + raw_sum[status]
+            canon_n[canon] = canon_n.get(canon, 0) + raw_n[status]
+
+        raw_states = [
+            {
+                "status": s,
+                "canonical": canonical_of(s),
+                "avg_h": round(raw_sum[s] / raw_n[s], 2) if raw_n[s] else 0.0,
+                "total_h": round(raw_sum[s], 2),
+                "n": raw_n[s],
+            }
+            for s in sorted(raw_sum, key=lambda x: -raw_sum[x])
+        ]
+        canonical_states = [
+            {
+                "status": c,
+                "avg_h": round(canon_sum[c] / canon_n[c], 2) if canon_n[c] else 0.0,
+                "total_h": round(canon_sum[c], 2),
+                "n": canon_n[c],
+            }
+            for c in sorted(canon_sum, key=lambda x: -canon_sum[x])
+        ]
+
+        return {
+            "player_id": player.id,
+            "display_name": player.display_name,
+            "area": player.area,
+            "is_aggregate": player.display_name == "Equipo de Producto",
+            "scope": scope,
+            "apartado": apartado,
+            "done_count": len(rows),
+            "cycle_avg_h": round(sum(cycles) / len(cycles), 2) if cycles else None,
+            "lead_avg_h": round(sum(leads) / len(leads), 2) if leads else None,
+            "qa_first_pass_pct": round(qa_passed / qa_total * 100, 1) if qa_total else None,
+            "raw_states": raw_states,
+            "canonical_states": canonical_states,
+        }
+
+    # ──────────────────────────────────────────────────────────────
     # Helpers internos
     # ──────────────────────────────────────────────────────────────
+
+    def _story_apartado_map(self) -> dict[str, str]:
+        """story_key → apartado (solo stories cuya épica tiene prefijo [XXX] de área)."""
+        rows = self._s.execute(
+            select(Story.jira_key, Epic.summary).join(
+                Epic, Story.parent_epic_key == Epic.jira_key
+            )
+        ).all()
+        out: dict[str, str] = {}
+        for story_key, epic_summary in rows:
+            ap = _apartado_of_summary(epic_summary)
+            if ap:
+                out[story_key] = ap
+        return out
+
+    def _apartado_filter(self, apartado: str | None) -> ColumnElement[bool] | None:
+        """Filtro SQL de subtasks por apartado. None = sin filtro (todos los apartados).
+
+        'Sin apartado' = subtasks sin story, o cuya story cuelga de una épica sin prefijo.
+        """
+        if not apartado:
+            return None
+        smap = self._story_apartado_map()
+        with_apartado = list(smap.keys())
+
+        if apartado == SIN_APARTADO:
+            if not with_apartado:
+                return None  # todo es "sin apartado" → sin filtro efectivo
+            return or_(
+                Subtask.parent_story_key.is_(None),
+                Subtask.parent_story_key.notin_(with_apartado),
+            )
+
+        keys = [k for k, v in smap.items() if v == apartado]
+        if not keys:
+            return Subtask.parent_story_key.is_(None) & Subtask.parent_story_key.is_not(None)
+        return Subtask.parent_story_key.in_(keys)
+
+    def _period_stats(
+        self, key: str, vals: list[tuple[float | None, float | None]], grouping: str
+    ) -> dict[str, Any] | None:
+        stats = self._aggregate_stats(vals)
+        if stats["done_count"] == 0:
+            return None
+        label = key
+        sort_key: Any = key
+        cycle_id: int | None = None
+        if grouping == "cycle" and key.isdigit():
+            cycle_id = int(key)
+            cyc = self._s.get(Cycle, cycle_id)
+            if cyc is not None:
+                label = cyc.name
+                sort_key = cyc.start_date.isoformat()
+        return {
+            "key": key,
+            "label": label,
+            "cycle_id": cycle_id,
+            "sort_key": sort_key,
+            **stats,
+        }
+
+    @staticmethod
+    def _aggregate_stats(vals: list[tuple[float | None, float | None]]) -> dict[str, Any]:
+        cyc = [c for c, _ in vals if c is not None]
+        lead = [ld for _, ld in vals if ld is not None]
+        return {
+            "done_count": len(vals),
+            "cycle_avg_h": round(sum(cyc) / len(cyc), 2) if cyc else None,
+            "cycle_median_h": round(median(cyc), 2) if cyc else None,
+            "lead_avg_h": round(sum(lead) / len(lead), 2) if lead else None,
+            "lead_median_h": round(median(lead), 2) if lead else None,
+        }
+
+    def _empty_dev_metrics(
+        self, player: Player, scope: str, apartado: str | None
+    ) -> dict[str, Any]:
+        return {
+            "player_id": player.id,
+            "display_name": player.display_name,
+            "area": player.area,
+            "is_aggregate": player.display_name == "Equipo de Producto",
+            "scope": scope,
+            "apartado": apartado,
+            "done_count": 0,
+            "cycle_avg_h": None,
+            "lead_avg_h": None,
+            "qa_first_pass_pct": None,
+            "raw_states": [],
+            "canonical_states": [],
+        }
 
     def _resolve_reference_cycle(self, cycle_id: int | None = None) -> Cycle | None:
         """Ciclo de referencia para Quality/comparativas.
@@ -448,18 +814,24 @@ class AnalyticsService:
             .limit(1)
         ).scalars().first()
 
-    def _quality_for_cycle(self, cycle_id: int) -> dict[str, float]:
+    def _quality_for_cycle(
+        self, cycle_id: int, apartado: str | None = None
+    ) -> dict[str, float]:
+        ap = self._apartado_filter(apartado)
+        ap_filter = [ap] if ap is not None else []
         tested = self._s.execute(
             select(func.count(Subtask.jira_key)).where(
                 Subtask.cycle_id == cycle_id,
                 Subtask.status == _DONE,
                 Subtask.qa_first_pass.is_not(None),
+                *ap_filter,
             )
         ).scalar_one()
         pending = self._s.execute(
             select(func.count(Subtask.jira_key)).where(
                 Subtask.cycle_id == cycle_id,
                 Subtask.status.in_(_QA_PENDING_STATUSES),
+                *ap_filter,
             )
         ).scalar_one()
         avg_qa = self._s.execute(
@@ -467,6 +839,7 @@ class AnalyticsService:
                 Subtask.cycle_id == cycle_id,
                 Subtask.status == _DONE,
                 Subtask.qa_biz_hours > 0,
+                *ap_filter,
             )
         ).scalar_one()
         return {
@@ -475,7 +848,11 @@ class AnalyticsService:
             "avg_qa_hours": round(float(avg_qa), 2) if avg_qa is not None else 0.0,
         }
 
-    def _qa_first_pass_for_cycle(self, cycle_id: int) -> dict[int, dict[str, Any]]:
+    def _qa_first_pass_for_cycle(
+        self, cycle_id: int, apartado: str | None = None
+    ) -> dict[int, dict[str, Any]]:
+        ap = self._apartado_filter(apartado)
+        ap_filter = [ap] if ap is not None else []
         rows = self._s.execute(
             select(
                 Player.id,
@@ -492,6 +869,7 @@ class AnalyticsService:
                 Subtask.status == _DONE,
                 Subtask.qa_first_pass.is_not(None),
                 Player.area.in_(_DEV_AREAS),
+                *ap_filter,
             )
             .group_by(Player.id)
         ).all()
@@ -706,6 +1084,72 @@ def _empty_metric() -> dict[str, Any]:
 # ──────────────────────────────────────────────────────────────
 # Utilidades de changelog
 # ──────────────────────────────────────────────────────────────
+
+def _apartado_of_summary(summary: str | None) -> str | None:
+    """Extrae el apartado (prefijo [XXX]) del summary de una épica.
+
+    Devuelve None si no hay prefijo al inicio, o si el corchete es una versión
+    numérica (ej. 'Version Container - [3.0]' → None, cae en 'Sin apartado').
+    """
+    if not summary:
+        return None
+    s = summary.strip()
+    if not s.startswith("[") or "]" not in s:
+        return None
+    inner = s[1 : s.index("]")].strip().upper()
+    # Excluir versiones tipo [2.1]/[3.0]: un apartado de área no empieza por dígito.
+    if not inner or inner[0].isdigit():
+        return None
+    return inner
+
+
+def _canonical_cycle_hours(
+    raw_changelog_json: str | None,
+    done_at: datetime | None,
+) -> float | None:
+    """Cycle Time (In Progress→Done) en horas hábiles, detectado vía canónico.
+
+    Detecta la PRIMERA transición a un estado crudo que mapea a 'In Progress' canónico
+    ('UI', 'Implementation', 'En progreso'…) y la ÚLTIMA a 'Done' canónico. Si falta un
+    extremo → None (no se inventa).
+
+    NOTA — el Lead Time (Backlog/creación→Done) NO se calcula aquí: la fecha de creación
+    real de Jira NO vive en raw_changelog (solo histories de cambios) y la columna
+    `created_at` de la BD es la fecha de IMPORT, no la de creación. El lead real lo capturó
+    WP-07h en `lt_biz_hours` al sincronizar (fields.created → done). Por eso cycle_lead_time
+    recalcula el cycle canónicamente pero reutiliza `lt_biz_hours` para el lead.
+    """
+    if not raw_changelog_json:
+        return None
+    try:
+        histories = json.loads(raw_changelog_json).get("histories", [])
+    except (json.JSONDecodeError, AttributeError, TypeError):
+        return None
+
+    # Las histories de Jira NO vienen garantizadas en orden cronológico → recolectar
+    # todas las transiciones de estado y ordenar por timestamp antes de elegir extremos.
+    transitions: list[tuple[datetime, str]] = []
+    for history in histories:
+        ts = _parse_dt(history.get("created"))
+        if ts is None:
+            continue
+        for item in history.get("items", []):
+            if item.get("field") == "status":
+                transitions.append((ts, canonical_of(item.get("toString", ""))))
+    transitions.sort(key=lambda x: x[0])
+
+    # Primer In Progress canónico (inicio del trabajo) y último Done canónico (cierre).
+    first_in_progress = next((ts for ts, c in transitions if c == "In Progress"), None)
+    last_done = next((ts for ts, c in reversed(transitions) if c == "Done"), None)
+
+    done_end = last_done or done_at
+    if first_in_progress is None or done_end is None:
+        return None
+    try:
+        return business_hours(first_in_progress, done_end)
+    except Exception:
+        return None
+
 
 def _parse_dt(dt_str: str | None) -> datetime | None:
     if not dt_str:

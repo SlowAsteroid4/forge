@@ -1,11 +1,14 @@
 import Link from "next/link";
+import { Suspense } from "react";
 import { api } from "@/lib/api";
 import type { DashboardResponse } from "@/lib/types/dashboard";
+import type { ApartadosResponse } from "@/lib/types/analytics";
 import { OpsHeader } from "@/components/ops/header";
 import { KpiCard } from "@/components/ops/kpi-card";
 import { AreaProgressGrid } from "@/components/ops/area-progress";
 import { DevTable } from "@/components/ops/dev-table";
 import { AlertsPanel } from "@/components/ops/alerts-panel";
+import { ApartadoFilter } from "@/components/ops/analytics/apartado-filter";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
 
@@ -19,20 +22,34 @@ function localDate(dateStr: string): Date {
 }
 
 interface PageProps {
-  searchParams: Promise<{ project?: string; cycle_id?: string }>;
+  searchParams: Promise<{ project?: string; cycle_id?: string; apartado?: string }>;
 }
 
-async function getDashboard(projectCode?: string, cycleId?: string): Promise<DashboardResponse | null> {
+async function getDashboard(
+  projectCode?: string,
+  cycleId?: string,
+  apartado?: string,
+): Promise<DashboardResponse | null> {
   const params = new URLSearchParams();
   if (projectCode) params.set("project_code", projectCode);
   if (cycleId) params.set("cycle_id", cycleId);
+  if (apartado) params.set("apartado", apartado);
   const query = params.toString() ? `?${params}` : "";
   return api.get<DashboardResponse>(`/dashboard/cycle${query}`).catch(() => null);
 }
 
+async function getApartados(): Promise<ApartadosResponse | null> {
+  return api.get<ApartadosResponse>("/analytics/apartados").catch(() => null);
+}
+
 export default async function DashboardPage({ searchParams }: PageProps) {
-  const { project, cycle_id } = await searchParams;
-  const dashboard = await getDashboard(project, cycle_id);
+  const { project, cycle_id, apartado: rawApartado } = await searchParams;
+  const apartado = rawApartado && rawApartado.trim() ? rawApartado : undefined;
+
+  const [dashboard, apartadosData] = await Promise.all([
+    getDashboard(project, cycle_id, apartado),
+    getApartados(),
+  ]);
 
   const cycle = dashboard?.cycle ?? null;
   const noData = !dashboard || !cycle;
@@ -43,6 +60,24 @@ export default async function DashboardPage({ searchParams }: PageProps) {
         projects={dashboard?.available_projects ?? []}
         lastSyncAt={dashboard?.last_synced_at ?? null}
       />
+
+      {/* Barra de filtro por apartado */}
+      {apartadosData && apartadosData.apartados.length > 0 && (
+        <div className="border-b border-border px-6 py-2 flex items-center gap-3">
+          <span className="text-xs text-muted-foreground shrink-0">Apartado:</span>
+          <Suspense>
+            <ApartadoFilter
+              options={apartadosData.apartados}
+              current={apartado ?? null}
+            />
+          </Suspense>
+          {apartado && (
+            <span className="text-xs text-muted-foreground">
+              · mostrando solo <span className="font-medium text-foreground">{apartado}</span>
+            </span>
+          )}
+        </div>
+      )}
 
       <div className="flex-1 p-6 space-y-6">
         {noData ? (

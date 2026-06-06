@@ -28,7 +28,7 @@ async function getMvpCandidates(cycleId: number): Promise<CycleCandidate[]> {
 }
 
 async function getAllPlayers(): Promise<PlayerOption[]> {
-  return api.get<PlayerOption[]>("/admin/players").catch(() => []);
+  return api.get<PlayerOption[]>("/admin/players-options").catch(() => []);
 }
 
 export default async function CycleClosePage() {

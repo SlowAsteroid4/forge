@@ -316,6 +316,10 @@ def _sum_adjustments(session: Session, subtask_key: str) -> tuple[float, float]:
     """
     Sumar todos los SpAdjustments de la subtask.
 
+    Tipos que suman como penalización: penalty, debuff_manual.
+    Tipos que suman como bono (offset): bonus, reversal.
+    mvp_bonus y mvp_reversal son player-level, no afectan sp_final de subtask.
+
     Returns:
         (total_bonus, total_penalty) — ambos valores positivos.
     """
@@ -325,8 +329,11 @@ def _sum_adjustments(session: Session, subtask_key: str) -> tuple[float, float]:
         )
     ).fetchall()
 
-    total_bonus = sum(r.amount_sp for r in rows if r.adjustment_type == "bonus")
-    total_penalty = sum(r.amount_sp for r in rows if r.adjustment_type == "penalty")
+    _PENALTY_TYPES = {"penalty", "debuff_manual"}
+    _BONUS_TYPES = {"bonus", "reversal"}
+
+    total_bonus = sum(r.amount_sp for r in rows if r.adjustment_type in _BONUS_TYPES)
+    total_penalty = sum(r.amount_sp for r in rows if r.adjustment_type in _PENALTY_TYPES)
     return total_bonus, total_penalty
 
 

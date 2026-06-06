@@ -118,6 +118,7 @@ def seed():
         _seed_engine_versions(session, now, totals)
         _seed_buffs(session, now, totals)
         _seed_achievements(session, now, totals)
+        _seed_debuffs(session, now, totals)
         session.commit()
 
         console.print(
@@ -345,6 +346,37 @@ def _seed_achievements(session, now: datetime, totals: dict) -> None:
     console.print(
         f"  [green]✓[/green] achievements.yaml  — {created} creados, {updated} actualizados"
     )
+
+
+def _seed_debuffs(session, now: datetime, totals: dict) -> None:
+    """Carga debuffs.yaml. Upsert por code (PK)."""
+    from forge.db.models.debuff import Debuff
+
+    path = SEED_DIR / "debuffs.yaml"
+    if not path.exists():
+        console.print(f"  [yellow]⚠[/yellow]  debuffs.yaml no encontrado en {SEED_DIR}")
+        return
+
+    data = yaml.safe_load(path.read_text()) or {}
+    records = data.get("debuffs", [])
+    created = updated = 0
+
+    for row in records:
+        code = row.get("code")
+        if not code:
+            continue
+        existing = session.get(Debuff, code)
+        if existing:
+            for k, v in row.items():
+                setattr(existing, k, v)
+            updated += 1
+        else:
+            session.add(Debuff(**row))
+            created += 1
+
+    totals["creados"] += created
+    totals["actualizados"] += updated
+    console.print(f"  [green]✓[/green] debuffs.yaml       — {created} creados, {updated} actualizados")
 
 
 @app.command()

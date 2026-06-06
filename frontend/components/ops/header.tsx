@@ -32,12 +32,12 @@ export function OpsHeader({ projects, lastSyncAt }: OpsHeaderProps) {
 
   const currentProject = searchParams.get("project") ?? "";
 
-  function handleProjectChange(value: string) {
+  function handleProjectChange(value: string | null) {
     const params = new URLSearchParams(searchParams.toString());
     if (!value) {
       params.delete("project");
     } else {
-      params.set("project", value);
+      params.set("project", value as string);
     }
     startTransition(() => {
       router.push(`${pathname}?${params.toString()}`);

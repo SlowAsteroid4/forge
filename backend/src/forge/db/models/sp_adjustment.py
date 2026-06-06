@@ -2,10 +2,29 @@
 
 from datetime import datetime
 
-from sqlalchemy import Enum, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, Enum, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from forge.db.base import Base
+
+# Tipos de ajuste de SP:
+#   bonus          — bonos planos positivos (mvp bonus manual, etc.)
+#   penalty        — penalizaciones automáticas del motor (D01, D03...)
+#   mvp_bonus      — bono MVP semanal (+5 SP al player)
+#   mvp_reversal   — reversal de MVP semanal (append-only)
+#   debuff_manual  — penalización manual aplicada por PM (UC-06)
+#   reversal       — revierte total o parcialmente un debuff_manual (UC-06, append-only)
+_ADJUSTMENT_TYPES = (
+    "bonus",
+    "penalty",
+    "mvp_bonus",
+    "mvp_reversal",
+    "debuff_manual",
+    "reversal",
+)
+
+# Valores válidos para appeal_resolution
+_APPEAL_RESOLUTIONS = ("upheld", "reversed", "reduced")
 
 
 class SpAdjustment(Base):
@@ -21,7 +40,7 @@ class SpAdjustment(Base):
         Integer, ForeignKey("players.id", ondelete="CASCADE"), nullable=True, index=True
     )
     adjustment_type: Mapped[str] = mapped_column(
-        Enum("bonus", "penalty", "mvp_bonus", "mvp_reversal", name="adjustment_type_enum"),
+        Enum(*_ADJUSTMENT_TYPES, name="adjustment_type_enum"),
         nullable=False,
     )
     catalog_code: Mapped[str | None] = mapped_column(String(10))
@@ -34,3 +53,15 @@ class SpAdjustment(Base):
     cycle_id: Mapped[int | None] = mapped_column(
         Integer, ForeignKey("cycles.id", ondelete="SET NULL"), index=True
     )
+
+    # ── Metadatos de apelación (solo estos campos pueden hacerse UPDATE) ──
+    # El valor de SP (amount_sp) NUNCA se modifica — siempre INSERT opuesto.
+    is_appealed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    appeal_resolution: Mapped[str | None] = mapped_column(
+        String(20), nullable=True
+    )  # upheld | reversed | reduced
+    appeal_resolved_by: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("players.id", ondelete="SET NULL"), nullable=True
+    )
+    appeal_resolved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    appeal_notes: Mapped[str | None] = mapped_column(Text, nullable=True)

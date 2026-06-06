@@ -65,7 +65,11 @@ const navSections: NavSection[] = [
         label: "Penalizaciones",
         href: "/operations/penalties",
         icon: <AlertTriangle size={16} />,
-        disabled: true,
+      },
+      {
+        label: "Apelaciones",
+        href: "/operations/penalties/appeals",
+        icon: <AlertTriangle size={16} className="text-yellow-500" />,
       },
       {
         label: "Cerrar ciclo",
@@ -100,14 +104,12 @@ const navSections: NavSection[] = [
       {
         label: "Forecast",
         href: "/analytics/forecast",
-        icon: <DollarSign size={16} />,
-        disabled: true,
+        icon: <TrendingUp size={16} />,
       },
       {
         label: "Costo por área",
         href: "/analytics/costs",
         icon: <DollarSign size={16} />,
-        disabled: true,
       },
     ],
   },
@@ -118,7 +120,6 @@ const navSections: NavSection[] = [
         label: "Players",
         href: "/admin/players",
         icon: <Users size={16} />,
-        disabled: true,
       },
       {
         label: "Integraciones",
@@ -144,11 +145,16 @@ const navSections: NavSection[] = [
 export function OpsSidebar() {
   const pathname = usePathname();
   const [cpPendingCount, setCpPendingCount] = useState(0);
+  const [appealsPendingCount, setAppealsPendingCount] = useState(0);
 
   useEffect(() => {
     fetch(`${API_BASE}/cp-approvals/pending`)
       .then((r) => r.json())
       .then((data: { total?: number }) => setCpPendingCount(data.total ?? 0))
+      .catch(() => {});
+    fetch(`${API_BASE}/penalties/appeals/pending`)
+      .then((r) => r.json())
+      .then((data: { total?: number }) => setAppealsPendingCount(data.total ?? 0))
       .catch(() => {});
   }, []);
 
@@ -201,6 +207,12 @@ export function OpsSidebar() {
                         {item.href === "/operations/cp-approvals" && cpPendingCount > 0 && (
                           <Badge variant="destructive" className="h-4 px-1 text-[10px]">
                             {cpPendingCount}
+                          </Badge>
+                        )}
+                        {/* Badge dinámico para apelaciones pendientes */}
+                        {item.href === "/operations/penalties/appeals" && appealsPendingCount > 0 && (
+                          <Badge variant="outline" className="h-4 px-1 text-[10px] border-yellow-500 text-yellow-600">
+                            {appealsPendingCount}
                           </Badge>
                         )}
                       </Link>

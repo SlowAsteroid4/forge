@@ -33,8 +33,8 @@ def _service(session: Session = Depends(get_session)) -> CycleService:
     return CycleService(session)
 
 
-@router.get("/players", response_model=list[PlayerOption])
-def list_players(session: Session = Depends(get_session)) -> list[PlayerOption]:
+@router.get("/players-options", response_model=list[PlayerOption])
+def list_players_options(session: Session = Depends(get_session)) -> list[PlayerOption]:
     players = session.query(Player).filter(Player.is_active.is_(True)).order_by(Player.display_name).all()
     return [PlayerOption(id=p.id, display_name=p.display_name, area=p.area or "") for p in players]
 

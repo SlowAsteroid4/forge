@@ -103,3 +103,73 @@ export interface TimeInStatusDetailResponse {
   group_by: string;
   rows: StatusDetailRow[];
 }
+
+// --- WP-17a: Quality, vs ciclo anterior, canónico ---
+
+export interface CycleBrief {
+  cycle_id: number;
+  name: string;
+  iso_year: number;
+  iso_week: number;
+  status: string;
+}
+
+export interface DeltaMetric {
+  current: number;
+  previous: number | null;
+  delta_abs: number | null;
+  delta_pct: number | null;
+}
+
+export interface QualitySummaryResponse {
+  reference_cycle: CycleBrief | null;
+  previous_cycle: CycleBrief | null;
+  tested: DeltaMetric;
+  pending: DeltaMetric;
+  avg_qa_hours: DeltaMetric;
+}
+
+export interface DevQaVsPrevious {
+  player_id: number;
+  display_name: string;
+  area: string;
+  total: number;
+  passed: number;
+  first_pass_pct: number;
+  previous_pct: number | null;
+  delta_pts: number | null;
+}
+
+export interface QaFirstPassVsPreviousResponse {
+  reference_cycle: CycleBrief | null;
+  previous_cycle: CycleBrief | null;
+  devs: DevQaVsPrevious[];
+}
+
+/** Los 9 estados canónicos del Manifiesto JPDS. */
+export type CanonicalStatus =
+  | "Backlog"
+  | "Ready"
+  | "In Progress"
+  | "In Review"
+  | "In QA"
+  | "Waiting"
+  | "Blocked"
+  | "Done"
+  | "Cancelled";
+
+export interface CanonicalTimeRow {
+  group_key: string;
+  display_name: string;
+  area: string | null;
+  done_count: number;
+  by_canonical: Record<string, number>;
+  total_h: number;
+}
+
+export interface CanonicalTimeResponse {
+  scope: string;
+  group_by: string;
+  area_filter: string | null;
+  rows: CanonicalTimeRow[];
+}

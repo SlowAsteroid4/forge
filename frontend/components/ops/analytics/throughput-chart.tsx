@@ -38,7 +38,7 @@ export function ThroughputChart({ cycles }: ThroughputChartProps) {
         <XAxis dataKey="name" tick={{ fontSize: 11 }} />
         <YAxis yAxisId="left" tick={{ fontSize: 11 }} />
         <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 11 }} />
-        <Tooltip contentStyle={{ fontSize: 12 }} />
+        <Tooltip contentStyle={{ fontSize: 12, backgroundColor: "var(--popover)", border: "1px solid var(--border)", color: "var(--popover-foreground)", borderRadius: "var(--radius-md)" }} cursor={{ fill: "var(--muted)" }} />
         <Legend wrapperStyle={{ fontSize: 11 }} />
         <Bar yAxisId="left" dataKey="subtasks" name="Subtasks Done" fill="#60A5FA" radius={[2, 2, 0, 0]} />
         <Line

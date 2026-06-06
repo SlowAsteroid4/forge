@@ -13,6 +13,10 @@ from forge.core.time_utils import business_hours
 from forge.db.models.cycle import Cycle
 from forge.db.models.player import Player
 from forge.db.models.subtask import Subtask
+from forge.services.canonical_status import BUCKET_TO_CANONICAL
+
+# Estados crudos (tal como se almacenan) que representan cola de QA pendiente.
+_QA_PENDING_STATUSES = ["In QA", "Ready for QA"]
 
 _DONE = "Done"
 _WINDOW_SIZE = 4
@@ -267,8 +271,243 @@ class AnalyticsService:
         return self._detail_by_player(filters)
 
     # ──────────────────────────────────────────────────────────────
+    # WP-17a: Quality, comparativas vs ciclo anterior, agrupación canónica
+    # ──────────────────────────────────────────────────────────────
+
+    def quality_summary(self, cycle_id: int | None = None) -> dict[str, Any]:
+        """Métricas de Quality del ciclo de referencia + delta vs ciclo anterior.
+
+        Métricas (read-only, derivadas de buckets WP-07h sin tocarlos):
+        - tested (PROBADAS): Done en el ciclo con paso por QA (qa_first_pass IS NOT NULL).
+        - pending (POR PROBAR): subtasks del ciclo en cola de QA ahora (In QA / Ready for QA).
+        - avg_qa_hours: promedio de qa_biz_hours (tiempo de Edgar/In QA) sobre las Done con QA.
+
+        El "ciclo anterior" es el closed/archived inmediato previo. Si no existe → previous=None
+        (la UI muestra "sin comparativa"; no se inventan 0%).
+        """
+        ref = self._resolve_reference_cycle(cycle_id)
+        if ref is None:
+            return {"reference_cycle": None, "previous_cycle": None,
+                    "tested": _empty_metric(), "pending": _empty_metric(),
+                    "avg_qa_hours": _empty_metric()}
+
+        cur = self._quality_for_cycle(ref.id)
+        prev_cycle = self._previous_closed_cycle(ref)
+        prev = self._quality_for_cycle(prev_cycle.id) if prev_cycle else None
+
+        return {
+            "reference_cycle": _cycle_brief(ref),
+            "previous_cycle": _cycle_brief(prev_cycle) if prev_cycle else None,
+            "tested": _delta_metric(cur["tested"], prev["tested"] if prev else None),
+            "pending": _delta_metric(cur["pending"], prev["pending"] if prev else None),
+            "avg_qa_hours": _delta_metric(
+                cur["avg_qa_hours"], prev["avg_qa_hours"] if prev else None
+            ),
+        }
+
+    def qa_first_pass_vs_previous(self, cycle_id: int | None = None) -> dict[str, Any]:
+        """QA first-pass por dev en el ciclo de referencia vs el ciclo anterior.
+
+        Devuelve por dev: pct actual, pct anterior (o None) y delta en puntos.
+        Si no hay ciclo previo, previous queda None → "sin comparativa".
+        """
+        ref = self._resolve_reference_cycle(cycle_id)
+        if ref is None:
+            return {"reference_cycle": None, "previous_cycle": None, "devs": []}
+
+        prev_cycle = self._previous_closed_cycle(ref)
+        cur_map = self._qa_first_pass_for_cycle(ref.id)
+        prev_map = self._qa_first_pass_for_cycle(prev_cycle.id) if prev_cycle else {}
+
+        devs = []
+        for pid, cur in sorted(cur_map.items(), key=lambda kv: -kv[1]["first_pass_pct"]):
+            prev = prev_map.get(pid)
+            prev_pct = prev["first_pass_pct"] if prev else None
+            devs.append(
+                {
+                    "player_id": pid,
+                    "display_name": cur["display_name"],
+                    "area": cur["area"],
+                    "total": cur["total"],
+                    "passed": cur["passed"],
+                    "first_pass_pct": cur["first_pass_pct"],
+                    "previous_pct": prev_pct,
+                    "delta_pts": (
+                        round(cur["first_pass_pct"] - prev_pct, 1)
+                        if prev_pct is not None
+                        else None
+                    ),
+                }
+            )
+
+        return {
+            "reference_cycle": _cycle_brief(ref),
+            "previous_cycle": _cycle_brief(prev_cycle) if prev_cycle else None,
+            "devs": devs,
+        }
+
+    def time_canonical(
+        self,
+        group_by: str = "area",
+        scope: str = "window",
+        area_filter: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Horas por estado CANÓNICO (Manifiesto JPDS), agrupado por área o dev.
+
+        Re-etiqueta los buckets WP-07h a los estados canónicos para AGRUPAR/MOSTRAR
+        (capa de display). NO cambia la atribución de tiempo: las horas son
+        exactamente las de WP-07h (dev_resp/qa/review/blocked/waiting).
+
+        Args:
+            group_by: 'area' | 'player'.
+            scope: 'window' | 'cycle' | 'historical'.
+            area_filter: si se da (ej. 'DESIGN'), restringe a esa área — usado por
+                la sección de Design (Jesús + Equipo de Producto, ambos DESIGN).
+        """
+        cycle_ids = self._resolve_cycle_ids(scope)
+        if not cycle_ids and scope != "historical":
+            return []
+
+        filters: list[Any] = [Subtask.status == _DONE]
+        if scope != "historical":
+            filters.append(Subtask.cycle_id.in_(cycle_ids))
+        if area_filter:
+            filters.append(Subtask.area == area_filter)
+
+        base = self._time_by_area(filters) if group_by == "area" else self._time_by_player(filters)
+
+        bucket_keys = {
+            "In Progress": "dev_resp_h",
+            "In Review": "review_h",
+            "In QA": "qa_h",
+            "Blocked": "blocked_h",
+            "Waiting": "waiting_h",
+        }
+        # Sanity: el mapeo canónico declarado coincide con el de buckets.
+        assert {v: k for k, v in bucket_keys.items()} == BUCKET_TO_CANONICAL
+
+        out = []
+        for r in base:
+            by_canonical = {canon: round(float(r[bk]), 2) for canon, bk in bucket_keys.items()}
+            out.append(
+                {
+                    "group_key": r["group_key"],
+                    "display_name": r["display_name"],
+                    "area": r.get("area", r["group_key"]),
+                    "done_count": r["done_count"],
+                    "by_canonical": by_canonical,
+                    "total_h": r["total_h"],
+                }
+            )
+        return out
+
+    # ──────────────────────────────────────────────────────────────
     # Helpers internos
     # ──────────────────────────────────────────────────────────────
+
+    def _resolve_reference_cycle(self, cycle_id: int | None = None) -> Cycle | None:
+        """Ciclo de referencia para Quality/comparativas.
+
+        Prioridad: cycle_id explícito → ciclo activo (si tiene Done) → ciclo más
+        reciente con Done>0. Devuelve None si no hay ningún ciclo con datos.
+        """
+        if cycle_id is not None:
+            return self._s.get(Cycle, cycle_id)
+
+        active = self._s.execute(
+            select(Cycle).where(Cycle.status == "active").order_by(Cycle.start_date.desc())
+        ).scalars().first()
+        if active is not None:
+            done = self._s.execute(
+                select(func.count(Subtask.jira_key)).where(
+                    Subtask.cycle_id == active.id, Subtask.status == _DONE
+                )
+            ).scalar_one()
+            if done > 0:
+                return active
+
+        ref = self._s.execute(
+            select(Cycle)
+            .join(Subtask, Subtask.cycle_id == Cycle.id)
+            .where(Subtask.status == _DONE)
+            .group_by(Cycle.id)
+            .order_by(Cycle.start_date.desc())
+            .limit(1)
+        ).scalars().first()
+        return ref or active
+
+    def _previous_closed_cycle(self, ref: Cycle) -> Cycle | None:
+        """Ciclo closed/archived inmediato previo al de referencia (por fecha)."""
+        return self._s.execute(
+            select(Cycle)
+            .where(
+                Cycle.status.in_(["closed", "archived"]),
+                Cycle.start_date < ref.start_date,
+            )
+            .order_by(Cycle.start_date.desc())
+            .limit(1)
+        ).scalars().first()
+
+    def _quality_for_cycle(self, cycle_id: int) -> dict[str, float]:
+        tested = self._s.execute(
+            select(func.count(Subtask.jira_key)).where(
+                Subtask.cycle_id == cycle_id,
+                Subtask.status == _DONE,
+                Subtask.qa_first_pass.is_not(None),
+            )
+        ).scalar_one()
+        pending = self._s.execute(
+            select(func.count(Subtask.jira_key)).where(
+                Subtask.cycle_id == cycle_id,
+                Subtask.status.in_(_QA_PENDING_STATUSES),
+            )
+        ).scalar_one()
+        avg_qa = self._s.execute(
+            select(func.avg(Subtask.qa_biz_hours)).where(
+                Subtask.cycle_id == cycle_id,
+                Subtask.status == _DONE,
+                Subtask.qa_biz_hours > 0,
+            )
+        ).scalar_one()
+        return {
+            "tested": int(tested),
+            "pending": int(pending),
+            "avg_qa_hours": round(float(avg_qa), 2) if avg_qa is not None else 0.0,
+        }
+
+    def _qa_first_pass_for_cycle(self, cycle_id: int) -> dict[int, dict[str, Any]]:
+        rows = self._s.execute(
+            select(
+                Player.id,
+                Player.display_name,
+                Player.area,
+                func.count(Subtask.jira_key).label("total"),
+                func.sum(
+                    case((Subtask.qa_first_pass == True, 1), else_=0)  # noqa: E712
+                ).label("passed"),
+            )
+            .join(Player, Subtask.assignee_player_id == Player.id)
+            .where(
+                Subtask.cycle_id == cycle_id,
+                Subtask.status == _DONE,
+                Subtask.qa_first_pass.is_not(None),
+                Player.area.in_(_DEV_AREAS),
+            )
+            .group_by(Player.id)
+        ).all()
+
+        out: dict[int, dict[str, Any]] = {}
+        for row in rows:
+            total = row.total or 0
+            passed = int(row.passed or 0)
+            out[row.id] = {
+                "display_name": row.display_name,
+                "area": row.area,
+                "total": total,
+                "passed": passed,
+                "first_pass_pct": round(passed / total * 100, 1) if total else 0.0,
+            }
+        return out
 
     def _resolve_cycle_ids(
         self,
@@ -424,6 +663,44 @@ class AnalyticsService:
             entry["area"] = meta[1]
 
         return detail_rows
+
+
+# ──────────────────────────────────────────────────────────────
+# Utilidades de comparativas (WP-17a)
+# ──────────────────────────────────────────────────────────────
+
+def _cycle_brief(cycle: Cycle | None) -> dict[str, Any] | None:
+    if cycle is None:
+        return None
+    return {
+        "cycle_id": cycle.id,
+        "name": cycle.name,
+        "iso_year": cycle.iso_year,
+        "iso_week": cycle.iso_week,
+        "status": cycle.status,
+    }
+
+
+def _delta_metric(current: float, previous: float | None) -> dict[str, Any]:
+    """Métrica con comparativa vs ciclo anterior.
+
+    previous=None → "sin comparativa" (delta_abs/delta_pct = None). delta_pct solo
+    se calcula si previous > 0 (evita divisiones por cero o +inf falsos).
+    """
+    delta_abs = round(current - previous, 2) if previous is not None else None
+    delta_pct: float | None = None
+    if previous is not None and previous != 0:
+        delta_pct = round((current - previous) / previous * 100, 1)
+    return {
+        "current": current,
+        "previous": previous,
+        "delta_abs": delta_abs,
+        "delta_pct": delta_pct,
+    }
+
+
+def _empty_metric() -> dict[str, Any]:
+    return {"current": 0, "previous": None, "delta_abs": None, "delta_pct": None}
 
 
 # ──────────────────────────────────────────────────────────────

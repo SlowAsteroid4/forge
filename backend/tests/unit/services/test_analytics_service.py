@@ -10,7 +10,6 @@ from forge.db.models.player import Player
 from forge.db.models.subtask import Subtask
 from forge.services.analytics_service import AnalyticsService, _parse_time_per_status
 
-
 # ──────────────────────────────────────────────
 # Factories
 # ──────────────────────────────────────────────
@@ -309,3 +308,113 @@ class TestParseTimePerStatus:
         assert result["In Review"] > 0
         # "Done" no tiene duración medida (es el último estado)
         assert "Done" not in result
+
+
+# ──────────────────────────────────────────────
+# WP-17a: Quality, vs ciclo anterior, canónico
+# ──────────────────────────────────────────────
+
+class TestQualitySummary:
+    def test_metrics_and_delta_vs_previous(self, test_session: Session) -> None:
+        prev = _cycle(test_session, "C-prev", status="closed", start_offset_weeks=2)
+        ref = _cycle(test_session, "C-ref", status="closed", start_offset_weeks=1)
+        # ref: 2 probadas (qa_first_pass set), 1 por probar (In QA), avg qa = (10+20)/2=15
+        _subtask(test_session, "R-1", cycle_id=ref.id, qa_first_pass=True, qa_h=10.0)
+        _subtask(test_session, "R-2", cycle_id=ref.id, qa_first_pass=False, qa_h=20.0)
+        _subtask(test_session, "R-3", status="In QA", cycle_id=ref.id)
+        # prev: 1 probada, avg qa = 5
+        _subtask(test_session, "P-1", cycle_id=prev.id, qa_first_pass=True, qa_h=5.0)
+        test_session.commit()
+
+        svc = AnalyticsService(test_session)
+        res = svc.quality_summary(cycle_id=ref.id)
+
+        assert res["reference_cycle"]["cycle_id"] == ref.id
+        assert res["previous_cycle"]["cycle_id"] == prev.id
+        assert res["tested"]["current"] == 2
+        assert res["tested"]["previous"] == 1
+        assert res["tested"]["delta_abs"] == 1
+        assert res["pending"]["current"] == 1
+        assert res["avg_qa_hours"]["current"] == pytest.approx(15.0)
+        assert res["avg_qa_hours"]["previous"] == pytest.approx(5.0)
+
+    def test_no_previous_cycle_means_sin_comparativa(self, test_session: Session) -> None:
+        ref = _cycle(test_session, "C-only", status="closed", start_offset_weeks=1)
+        _subtask(test_session, "O-1", cycle_id=ref.id, qa_first_pass=True, qa_h=8.0)
+        test_session.commit()
+
+        svc = AnalyticsService(test_session)
+        res = svc.quality_summary(cycle_id=ref.id)
+        assert res["previous_cycle"] is None
+        assert res["tested"]["previous"] is None
+        assert res["tested"]["delta_abs"] is None
+        assert res["tested"]["delta_pct"] is None
+
+    def test_zero_previous_yields_null_pct_not_infinity(self, test_session: Session) -> None:
+        prev = _cycle(test_session, "C-zprev", status="closed", start_offset_weeks=2)
+        ref = _cycle(test_session, "C-zref", status="closed", start_offset_weeks=1)
+        _subtask(test_session, "Z-ref", cycle_id=ref.id, qa_first_pass=True)
+        # prev sin probadas → previous=0
+        _subtask(test_session, "Z-prev", status="Backlog", cycle_id=prev.id)
+        test_session.commit()
+
+        svc = AnalyticsService(test_session)
+        res = svc.quality_summary(cycle_id=ref.id)
+        assert res["tested"]["previous"] == 0
+        assert res["tested"]["delta_pct"] is None  # no +inf inventado
+
+
+class TestQaFirstPassVsPrevious:
+    def test_dev_current_previous_delta(self, test_session: Session) -> None:
+        prev = _cycle(test_session, "Q-prev", status="closed", start_offset_weeks=2)
+        ref = _cycle(test_session, "Q-ref", status="closed", start_offset_weeks=1)
+        dev = _player(test_session, "dev-1", "Dev Uno", area="BE")
+        # ref: 1/2 pass = 50%
+        _subtask(test_session, "QR-1", cycle_id=ref.id, assignee_id=dev.id, qa_first_pass=True)
+        _subtask(test_session, "QR-2", cycle_id=ref.id, assignee_id=dev.id, qa_first_pass=False)
+        # prev: 1/1 pass = 100%
+        _subtask(test_session, "QP-1", cycle_id=prev.id, assignee_id=dev.id, qa_first_pass=True)
+        test_session.commit()
+
+        svc = AnalyticsService(test_session)
+        res = svc.qa_first_pass_vs_previous(cycle_id=ref.id)
+        row = next(d for d in res["devs"] if d["player_id"] == dev.id)
+        assert row["first_pass_pct"] == pytest.approx(50.0)
+        assert row["previous_pct"] == pytest.approx(100.0)
+        assert row["delta_pts"] == pytest.approx(-50.0)
+
+
+class TestTimeCanonical:
+    def test_bucket_sum_matches_total(self, test_session: Session) -> None:
+        ref = _cycle(test_session, "T-ref", status="closed", start_offset_weeks=1)
+        _subtask(
+            test_session, "TC-1", area="BE", cycle_id=ref.id,
+            dev_resp_h=10.0, qa_h=4.0, review_h=2.0, blocked_h=1.0, waiting_h=3.0,
+        )
+        test_session.commit()
+
+        svc = AnalyticsService(test_session)
+        rows = svc.time_canonical(group_by="area", scope="window")
+        be = next(r for r in rows if r["group_key"] == "BE")
+        # Re-etiquetado WP-07h → canónico
+        assert be["by_canonical"]["In Progress"] == pytest.approx(10.0)
+        assert be["by_canonical"]["In QA"] == pytest.approx(4.0)
+        assert be["by_canonical"]["In Review"] == pytest.approx(2.0)
+        assert be["by_canonical"]["Blocked"] == pytest.approx(1.0)
+        assert be["by_canonical"]["Waiting"] == pytest.approx(3.0)
+        # La suma de canónicos == total_h
+        assert sum(be["by_canonical"].values()) == pytest.approx(be["total_h"])
+        assert be["total_h"] == pytest.approx(20.0)
+
+    def test_area_filter_for_design(self, test_session: Session) -> None:
+        ref = _cycle(test_session, "T-design", status="closed", start_offset_weeks=1)
+        designer = _player(test_session, "des-1", "Jesús", area="DESIGN")
+        _subtask(test_session, "DD-1", area="DESIGN", cycle_id=ref.id,
+                 assignee_id=designer.id, dev_resp_h=5.0)
+        _subtask(test_session, "BB-1", area="BE", cycle_id=ref.id, dev_resp_h=99.0)
+        test_session.commit()
+
+        svc = AnalyticsService(test_session)
+        rows = svc.time_canonical(group_by="player", scope="window", area_filter="DESIGN")
+        assert all(r["area"] == "DESIGN" for r in rows)
+        assert any(r["display_name"] == "Jesús" for r in rows)

@@ -133,3 +133,86 @@ class TimeInStatusDetailResponse(BaseModel):
     scope: str
     group_by: str
     rows: list[StatusDetailRow]
+
+
+# ──────────────────────────────────────────────────────────────
+# WP-17a — Quality, comparativas vs ciclo anterior, agrupación canónica
+# ──────────────────────────────────────────────────────────────
+
+
+class CycleBrief(BaseModel):
+    """Identificación mínima de un ciclo para comparativas."""
+
+    cycle_id: int
+    name: str
+    iso_year: int
+    iso_week: int
+    status: str
+
+
+class DeltaMetric(BaseModel):
+    """Una métrica con su comparativa vs ciclo anterior.
+
+    previous/delta_* = None ⇒ "sin comparativa" (no hay ciclo previo o base 0).
+    """
+
+    current: float
+    previous: float | None = None
+    delta_abs: float | None = None
+    delta_pct: float | None = None
+
+
+class QualitySummaryResponse(BaseModel):
+    """Sección Quality propia: probadas / por probar / tiempo prom. en QA + vs anterior."""
+
+    reference_cycle: CycleBrief | None = None
+    previous_cycle: CycleBrief | None = None
+    tested: DeltaMetric = Field(description="PROBADAS: Done con paso por QA en el ciclo")
+    pending: DeltaMetric = Field(description="POR PROBAR: en cola de QA ahora (In QA / Ready for QA)")
+    avg_qa_hours: DeltaMetric = Field(description="Horas hábiles promedio en QA (qa_biz_hours)")
+
+
+class DevQaVsPrevious(BaseModel):
+    """QA first-pass de un dev: ciclo actual vs anterior."""
+
+    player_id: int
+    display_name: str
+    area: str
+    total: int
+    passed: int
+    first_pass_pct: float
+    previous_pct: float | None = None
+    delta_pts: float | None = Field(default=None, description="Diferencia en puntos vs anterior")
+
+
+class QaFirstPassVsPreviousResponse(BaseModel):
+    """QA first-pass por dev comparado contra el ciclo anterior."""
+
+    reference_cycle: CycleBrief | None = None
+    previous_cycle: CycleBrief | None = None
+    devs: list[DevQaVsPrevious]
+
+
+class CanonicalTimeRow(BaseModel):
+    """Horas por estado canónico para un grupo (área o dev)."""
+
+    group_key: str
+    display_name: str
+    area: str | None = None
+    done_count: int
+    by_canonical: dict[str, float] = Field(
+        description="Horas por estado canónico (In Progress/In Review/In QA/Blocked/Waiting)"
+    )
+    total_h: float
+
+
+class CanonicalTimeResponse(BaseModel):
+    """Tiempo agrupado por estado canónico del Manifiesto JPDS (capa de display).
+
+    Las horas provienen de los buckets WP-07h sin alterar la atribución.
+    """
+
+    scope: str
+    group_by: str
+    area_filter: str | None = None
+    rows: list[CanonicalTimeRow]

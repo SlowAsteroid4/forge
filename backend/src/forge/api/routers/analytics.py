@@ -5,12 +5,15 @@ from sqlalchemy.orm import Session
 
 from forge.db.session import get_session
 from forge.schemas.analytics import (
+    CanonicalTimeResponse,
     CpByAreaResponse,
     CpPerDayResponse,
     QaFirstPassResponse,
+    QaFirstPassVsPreviousResponse,
+    QualitySummaryResponse,
+    ThroughputResponse,
     TimeInStatusDetailResponse,
     TimeInStatusResponse,
-    ThroughputResponse,
 )
 from forge.services.analytics_service import AnalyticsService
 
@@ -137,6 +140,64 @@ def get_time_in_status(
             scope=scope,
             group_by=group_by,
             rows=[TimeInStatusRow(**r) for r in rows],
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail={"error": "analytics_error", "message": str(e)})
+
+
+@router.get("/quality", response_model=QualitySummaryResponse)
+def get_quality(
+    cycle_id: int | None = Query(
+        default=None, description="Ciclo de referencia (None = activo/más reciente con datos)"
+    ),
+    svc: AnalyticsService = Depends(_svc),
+) -> QualitySummaryResponse:
+    """Sección Quality: probadas / por probar / tiempo prom. en QA + delta vs ciclo anterior."""
+    try:
+        data = svc.quality_summary(cycle_id=cycle_id)
+        return QualitySummaryResponse(**data)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail={"error": "analytics_error", "message": str(e)})
+
+
+@router.get("/qa-first-pass-vs-previous", response_model=QaFirstPassVsPreviousResponse)
+def get_qa_first_pass_vs_previous(
+    cycle_id: int | None = Query(
+        default=None, description="Ciclo de referencia (None = activo/más reciente con datos)"
+    ),
+    svc: AnalyticsService = Depends(_svc),
+) -> QaFirstPassVsPreviousResponse:
+    """% QA first-pass por dev: ciclo de referencia vs ciclo anterior."""
+    try:
+        data = svc.qa_first_pass_vs_previous(cycle_id=cycle_id)
+        return QaFirstPassVsPreviousResponse(**data)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail={"error": "analytics_error", "message": str(e)})
+
+
+@router.get("/time-canonical", response_model=CanonicalTimeResponse)
+def get_time_canonical(
+    group_by: str = Query(default="area", pattern="^(area|player)$"),
+    scope: str = Query(default="window", pattern="^(cycle|window|historical)$"),
+    area: str | None = Query(
+        default=None, description="Filtra a un área (ej. 'DESIGN' para la sección de Design)"
+    ),
+    svc: AnalyticsService = Depends(_svc),
+) -> CanonicalTimeResponse:
+    """Horas por estado CANÓNICO (Manifiesto JPDS) por área o dev.
+
+    Las horas vienen de los buckets WP-07h (atribución intacta); solo se re-etiquetan
+    a estados canónicos para mostrar. `total_h` = suma de `by_canonical`.
+    """
+    try:
+        rows = svc.time_canonical(group_by=group_by, scope=scope, area_filter=area)
+        from forge.schemas.analytics import CanonicalTimeRow
+
+        return CanonicalTimeResponse(
+            scope=scope,
+            group_by=group_by,
+            area_filter=area,
+            rows=[CanonicalTimeRow(**r) for r in rows],
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail={"error": "analytics_error", "message": str(e)})

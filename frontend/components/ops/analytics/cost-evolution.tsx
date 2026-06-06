@@ -68,7 +68,7 @@ export function CostEvolution({ points }: { points: EvolutionPointItem[] }) {
                   name === "cost_per_cp" ? "$/CP" : name,
                 ]}
                 labelClassName="text-xs"
-                contentStyle={{ fontSize: 12 }}
+                contentStyle={{ fontSize: 12, backgroundColor: "var(--popover)", border: "1px solid var(--border)", color: "var(--popover-foreground)", borderRadius: "var(--radius-md)" }}
               />
               <Legend
                 formatter={(value) => (value === "cost_per_cp" ? "$/CP" : value)}

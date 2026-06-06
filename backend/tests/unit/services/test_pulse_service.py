@@ -1,26 +1,25 @@
-"""Tests para PulseService (UC-16) — Pulso Operativo."""
+"""Tests para PulseService (UC-16) — Pulso Operativo (rediseño WP-16)."""
 
 from __future__ import annotations
 
 import json
 from datetime import UTC, datetime, timedelta
 
-import pytest
-from sqlalchemy.orm import Session
 from sqlalchemy import text
+from sqlalchemy.orm import Session
 
 from forge.db.models.area_wip_limit import AreaWipLimit
 from forge.db.models.player import Player
 from forge.db.models.project import Project
 from forge.db.models.subtask import Subtask
-from forge.services.pulse_service import _semaforo, PulseService
-
+from forge.schemas.pulse import FlowCounter, PulseSnapshot
+from forge.services.pulse_service import PulseService
 
 # ── Factories ─────────────────────────────────────────────────────────────────
 
 
 def _seed_wip_limits(session: Session) -> None:
-    """Sembrar catálogo WIP vía ORM (respeta created_at del mixin base)."""
+    """Sembrar catálogo de áreas vía ORM (define qué áreas reciben card)."""
     for area, limit, excluded in [
         ("BE", 3, False),
         ("FE", 3, False),
@@ -88,7 +87,6 @@ def _subtask(
         issue_type="Sub-task",
         raw_changelog=json.dumps(cl_data),
     )
-    # Forzar created_at más antiguo para tests de aging
     session.add(s)
     session.flush()
     if created_days_ago != 1:
@@ -111,130 +109,190 @@ def _status_changelog_entry(from_s: str, to_s: str, hours_ago: float) -> dict:
     }
 
 
-# ── Tests: _semaforo ──────────────────────────────────────────────────────────
+def _counter(snap: PulseSnapshot, key: str) -> FlowCounter:
+    return next(c for c in snap.flow_counters if c.key == key)
 
 
-def test_semaforo_verde_bajo():
-    assert _semaforo(0) == "verde"
-    assert _semaforo(50) == "verde"
-    assert _semaforo(79.9) == "verde"
+# ── CAMBIO 1: Franja de contadores por estado ──────────────────────────────────
 
 
-def test_semaforo_amarillo():
-    assert _semaforo(80) == "amarillo"
-    assert _semaforo(100) == "amarillo"
+def test_flow_counters_siempre_7_en_orden(test_session: Session):
+    _seed_wip_limits(test_session)
+    _project(test_session)
+    snap = PulseService(test_session).get_pulse()
+    keys = [c.key for c in snap.flow_counters]
+    assert keys == [
+        "backlog",
+        "ready",
+        "in_progress",
+        "in_review",
+        "ready_for_qa",
+        "in_qa",
+        "done",
+    ]
 
 
-def test_semaforo_rojo():
-    assert _semaforo(100.1) == "rojo"
-    assert _semaforo(150) == "rojo"
-
-
-# ── Tests: WIP por área ───────────────────────────────────────────────────────
-
-
-def test_wip_area_verde(test_session: Session):
+def test_flow_counters_incluye_backlog_y_done(test_session: Session):
+    """La franja cuenta Backlog y Done (que el fetch operativo excluye)."""
     _seed_wip_limits(test_session)
     _project(test_session)
     p = _player(test_session, 1, "BE", "Dev1")
-    _subtask(test_session, "YAP-1", "In Progress", "BE", p.id)
-    _subtask(test_session, "YAP-2", "In Review", "BE", p.id)
+    _subtask(test_session, "YAP-B1", "Backlog", "BE", p.id)
+    _subtask(test_session, "YAP-B2", "Backlog", "BE", p.id)
+    _subtask(test_session, "YAP-D1", "Done", "BE", p.id)
+    _subtask(test_session, "YAP-IP", "In Progress", "BE", p.id)
 
     snap = PulseService(test_session).get_pulse()
-    be = next(c for c in snap.wip_by_area if c.area == "BE")
-    assert be.wip_actual == 2
-    assert be.max_wip_individual == 2  # Dev1 tiene 2 → 66% del límite 3
-    assert be.devs_over_limit == 0
-    assert be.semaforo == "verde"
+    assert _counter(snap, "backlog").count == 2
+    assert _counter(snap, "done").count == 1
+    assert _counter(snap, "in_progress").count == 1
 
 
-def test_wip_area_amarillo(test_session: Session):
+def test_flow_counters_pliega_variantes_in_progress(test_session: Session):
+    """Active/Implementation/In Design/UI Implementation se pliegan en In Progress."""
     _seed_wip_limits(test_session)
     _project(test_session)
     p = _player(test_session, 2, "BE", "Dev2")
-    _subtask(test_session, "YAP-3", "In Progress", "BE", p.id)
-    _subtask(test_session, "YAP-4", "In Review", "BE", p.id)
-    _subtask(test_session, "YAP-5", "Active", "BE", p.id)
+    _subtask(test_session, "YAP-1", "In Progress", "BE", p.id)
+    _subtask(test_session, "YAP-2", "Active", "BE", p.id)
+    _subtask(test_session, "YAP-3", "Implementation", "BE", p.id)
+    _subtask(test_session, "YAP-4", "In Design", "DESIGN", p.id)
+    _subtask(test_session, "YAP-5", "UI Implementation", "FE", p.id)
 
-    snap = PulseService(test_session).get_pulse()
-    be = next(c for c in snap.wip_by_area if c.area == "BE")
-    assert be.wip_actual == 3
-    assert be.max_wip_individual == 3  # Dev2 en límite → amarillo (100%)
-    assert be.devs_over_limit == 0
-    assert be.semaforo == "amarillo"
+    ip = _counter(PulseService(test_session).get_pulse(), "in_progress")
+    assert ip.count == 5
+    assert "Active" in ip.raw_statuses
+    assert "UI Implementation" in ip.raw_statuses
 
 
-def test_wip_area_rojo(test_session: Session):
+def test_flow_counter_code_review_mapea_in_review(test_session: Session):
+    """El contador 'Code Review' cuenta el status real 'In Review'."""
     _seed_wip_limits(test_session)
     _project(test_session)
-    p = _player(test_session, 3, "FE", "Dev3")
-    for i in range(4):
-        _subtask(test_session, f"YAP-{10+i}", "In Progress", "FE", p.id)
+    p = _player(test_session, 3, "BE", "Dev3")
+    _subtask(test_session, "YAP-R1", "In Review", "BE", p.id)
 
-    snap = PulseService(test_session).get_pulse()
-    fe = next(c for c in snap.wip_by_area if c.area == "FE")
-    assert fe.wip_actual == 4
-    assert fe.max_wip_individual == 4  # Dev3 tiene 4 > límite 3
-    assert fe.devs_over_limit == 1
-    assert fe.semaforo == "rojo"
+    cr = _counter(PulseService(test_session).get_pulse(), "in_review")
+    assert cr.label == "Code Review"
+    assert cr.count == 1
+    assert cr.raw_statuses == ["In Review"]
 
 
-def test_wip_unassigned_no_cuenta(test_session: Session):
-    """Subtasks sin asignee NO deben inflar el WIP del área."""
+# ── CAMBIO 2: Cards por área ───────────────────────────────────────────────────
+
+
+def test_area_card_agrupa_por_estado(test_session: Session):
     _seed_wip_limits(test_session)
     _project(test_session)
-    # 10 subtasks activas en BE pero sin asignee
-    for i in range(10):
-        _subtask(test_session, f"YAP-UN{i}", "In Progress", "BE", player_id=None)
+    p = _player(test_session, 4, "BE", "DevA")
+    _subtask(test_session, "YAP-A1", "In Progress", "BE", p.id)
+    _subtask(test_session, "YAP-A2", "In Progress", "BE", p.id)
+    _subtask(test_session, "YAP-A3", "In Review", "BE", p.id)
 
     snap = PulseService(test_session).get_pulse()
-    be = next(c for c in snap.wip_by_area if c.area == "BE")
-    assert be.wip_actual == 0        # sin asignee → no cuentan
-    assert be.max_wip_individual == 0
-    assert be.semaforo == "verde"
+    be = next(c for c in snap.area_cards if c.area == "BE")
+    assert be.total_active == 3
+    groups = {g.status: g for g in be.by_status}
+    assert groups["In Progress"].count == 2
+    assert groups["In Review"].count == 1
+    # Cada tarea trae código + dueño + zona de color
+    t = groups["In Progress"].tasks[0]
+    assert t.jira_key.startswith("YAP-")
+    assert t.assignee_name == "DevA"
+    assert t.zone == "dev"
 
 
-def test_wip_multiples_devs_solo_uno_excede(test_session: Session):
-    """Verde si solo algunos devs están en límite; rojo si uno excede."""
+def test_area_card_excluye_backlog_y_done(test_session: Session):
     _seed_wip_limits(test_session)
     _project(test_session)
-    p_ok = _player(test_session, 20, "BE", "DevOK")
-    p_over = _player(test_session, 21, "BE", "DevOver")
-    # DevOK tiene 2 (dentro del límite 3)
-    _subtask(test_session, "YAP-OK1", "In Progress", "BE", p_ok.id)
-    _subtask(test_session, "YAP-OK2", "In Review", "BE", p_ok.id)
-    # DevOver tiene 4 (excede límite 3)
-    for i in range(4):
-        _subtask(test_session, f"YAP-OV{i}", "In Progress", "BE", p_over.id)
+    p = _player(test_session, 5, "BE", "DevB")
+    _subtask(test_session, "YAP-AC", "In Progress", "BE", p.id)
+    _subtask(test_session, "YAP-BK", "Backlog", "BE", p.id)
+    _subtask(test_session, "YAP-DN", "Done", "BE", p.id)
 
-    snap = PulseService(test_session).get_pulse()
-    be = next(c for c in snap.wip_by_area if c.area == "BE")
-    assert be.wip_actual == 6
-    assert be.max_wip_individual == 4
-    assert be.devs_over_limit == 1
-    assert be.semaforo == "rojo"
+    be = next(c for c in PulseService(test_session).get_pulse().area_cards if c.area == "BE")
+    assert be.total_active == 1
+    assert all(g.status not in ("Backlog", "Done") for g in be.by_status)
 
 
-def test_qa_excluida_del_wip(test_session: Session):
+def test_area_cards_excluyen_qa_y_po(test_session: Session):
     _seed_wip_limits(test_session)
     _project(test_session)
-    p = _player(test_session, 4, "QA", "Edgar")
-    for i in range(6):
-        _subtask(test_session, f"YAP-Q{i}", "In QA", "QA", p.id)
-
-    snap = PulseService(test_session).get_pulse()
-    areas = [c.area for c in snap.wip_by_area]
+    areas = [c.area for c in PulseService(test_session).get_pulse().area_cards]
     assert "QA" not in areas
+    assert "PO" not in areas
+    assert set(areas) == {"BE", "FE", "DESIGN", "DB"}
 
 
-# ── Tests: Bloqueos ───────────────────────────────────────────────────────────
+def test_area_card_etiqueta_equipo_agregado(test_session: Session):
+    """'Equipo de Producto' se marca como cuenta-grupo agregada, no dev individual."""
+    _seed_wip_limits(test_session)
+    _project(test_session)
+    p = _player(test_session, 14, "DESIGN", "Equipo de Producto")
+    _subtask(test_session, "YAP-EP", "In Design", "DESIGN", p.id)
+
+    design = next(c for c in PulseService(test_session).get_pulse().area_cards if c.area == "DESIGN")
+    task = design.by_status[0].tasks[0]
+    assert task.is_aggregate_team is True
+    assert task.assignee_name == "Equipo de Producto"
+
+
+def test_area_card_dev_individual_no_es_agregado(test_session: Session):
+    _seed_wip_limits(test_session)
+    _project(test_session)
+    p = _player(test_session, 12, "DESIGN", "Jesús Mancilla")
+    _subtask(test_session, "YAP-JE", "In Design", "DESIGN", p.id)
+
+    design = next(c for c in PulseService(test_session).get_pulse().area_cards if c.area == "DESIGN")
+    task = design.by_status[0].tasks[0]
+    assert task.is_aggregate_team is False
+
+
+# ── CAMBIO 3: Drill-down de dev ────────────────────────────────────────────────
+
+
+def test_dev_drilldown_lista_tareas_en_progreso(test_session: Session):
+    _seed_wip_limits(test_session)
+    _project(test_session)
+    p = _player(test_session, 6, "BE", "DevDD")
+    _subtask(test_session, "YAP-DD1", "In Progress", "BE", p.id)
+    _subtask(test_session, "YAP-DD2", "In Review", "BE", p.id)
+    _subtask(test_session, "YAP-DD3", "Done", "BE", p.id)  # terminal: no aparece
+
+    dd = PulseService(test_session).get_dev_drilldown(p.id)
+    assert dd.display_name == "DevDD"
+    assert dd.total == 2
+    keys = {t.jira_key for t in dd.tasks}
+    assert keys == {"YAP-DD1", "YAP-DD2"}
+    assert all(t.zone for t in dd.tasks)
+
+
+def test_dev_drilldown_equipo_agregado(test_session: Session):
+    _seed_wip_limits(test_session)
+    _project(test_session)
+    p = _player(test_session, 14, "DESIGN", "Equipo de Producto")
+    _subtask(test_session, "YAP-G1", "In Design", "DESIGN", p.id)
+
+    dd = PulseService(test_session).get_dev_drilldown(p.id)
+    assert dd.is_aggregate_team is True
+    assert dd.total == 1
+
+
+def test_dev_drilldown_player_inexistente(test_session: Session):
+    _seed_wip_limits(test_session)
+    _project(test_session)
+    dd = PulseService(test_session).get_dev_drilldown(999)
+    assert dd.total == 0
+    assert dd.tasks == []
+
+
+# ── Bloqueos (conservado) ──────────────────────────────────────────────────────
 
 
 def test_bloqueo_critico_mas_8h(test_session: Session):
     _seed_wip_limits(test_session)
     _project(test_session)
-    p = _player(test_session, 5, "BE", "Bloq")
-    # 48 calendar hours → garantiza >=8 horas hábiles incluso cruzando fin de semana
+    p = _player(test_session, 7, "BE", "Bloq")
     entries = [_status_changelog_entry("In Progress", "Blocked", hours_ago=48)]
     _subtask(test_session, "YAP-BLK", "Blocked", "BE", p.id, changelog_entries=entries)
 
@@ -247,7 +305,7 @@ def test_bloqueo_critico_mas_8h(test_session: Session):
 def test_bloqueo_no_critico_menos_8h(test_session: Session):
     _seed_wip_limits(test_session)
     _project(test_session)
-    p = _player(test_session, 6, "BE", "Bloq2")
+    p = _player(test_session, 8, "BE", "Bloq2")
     entries = [_status_changelog_entry("In Progress", "Blocked", hours_ago=3)]
     _subtask(test_session, "YAP-BLK2", "Blocked", "BE", p.id, changelog_entries=entries)
 
@@ -258,24 +316,25 @@ def test_bloqueo_no_critico_menos_8h(test_session: Session):
 def test_block_reason_siempre_null(test_session: Session):
     _seed_wip_limits(test_session)
     _project(test_session)
-    p = _player(test_session, 7, "BE", "Dev7")
+    p = _player(test_session, 9, "BE", "Dev9")
     _subtask(test_session, "YAP-NR", "Blocked", "BE", p.id)
 
     snap = PulseService(test_session).get_pulse()
     assert snap.blocks[0].block_reason is None
 
 
-# ── Tests: Aging ──────────────────────────────────────────────────────────────
+# ── Aging (conservado) ─────────────────────────────────────────────────────────
 
 
 def test_aging_critico_detectado(test_session: Session):
     _seed_wip_limits(test_session)
     _project(test_session)
-    p = _player(test_session, 8, "BE", "Anciano")
-    # 6 semanas atrás = garantiza >5 días hábiles en estado actual
+    p = _player(test_session, 10, "BE", "Anciano")
     entries = [_status_changelog_entry("Ready", "In Progress", hours_ago=24 * 42)]
-    _subtask(test_session, "YAP-OLD", "In Progress", "BE", p.id,
-             created_days_ago=42, changelog_entries=entries)
+    _subtask(
+        test_session, "YAP-OLD", "In Progress", "BE", p.id,
+        created_days_ago=42, changelog_entries=entries,
+    )
 
     snap = PulseService(test_session).get_pulse()
     keys = [a.jira_key for a in snap.aging_critical]
@@ -285,58 +344,60 @@ def test_aging_critico_detectado(test_session: Session):
 def test_aging_no_critico_1_dia(test_session: Session):
     _seed_wip_limits(test_session)
     _project(test_session)
-    p = _player(test_session, 9, "FE", "Nuevo")
+    p = _player(test_session, 11, "FE", "Nuevo")
     entries = [_status_changelog_entry("Ready", "In Progress", hours_ago=4)]
-    _subtask(test_session, "YAP-NEW", "In Progress", "FE", p.id,
-             created_days_ago=1, changelog_entries=entries)
+    _subtask(
+        test_session, "YAP-NEW", "In Progress", "FE", p.id,
+        created_days_ago=1, changelog_entries=entries,
+    )
 
     snap = PulseService(test_session).get_pulse()
     keys = [a.jira_key for a in snap.aging_critical]
     assert "YAP-NEW" not in keys
 
 
-# ── Tests: Filtros ────────────────────────────────────────────────────────────
+# ── Filtros (conservado, adaptado al nuevo schema) ─────────────────────────────
 
 
 def test_filtro_por_area(test_session: Session):
     _seed_wip_limits(test_session)
     _project(test_session)
-    p_be = _player(test_session, 10, "BE", "DevBE")
-    p_fe = _player(test_session, 11, "FE", "DevFE")
+    p_be = _player(test_session, 20, "BE", "DevBE")
+    p_fe = _player(test_session, 21, "FE", "DevFE")
     _subtask(test_session, "YAP-F1", "In Progress", "BE", p_be.id)
     _subtask(test_session, "YAP-F2", "In Review", "FE", p_fe.id)
 
     snap = PulseService(test_session).get_pulse(areas=["BE"])
-    assert snap.globals.activas == 1
-    assert all(c.area == "BE" for c in snap.wip_by_area)
+    assert _counter(snap, "in_progress").count == 1
+    assert all(c.area == "BE" for c in snap.area_cards)
 
 
 def test_filtro_por_project_code(test_session: Session):
     _seed_wip_limits(test_session)
     _project(test_session)
-    p = _player(test_session, 12, "BE", "DevP")
+    p = _player(test_session, 22, "BE", "DevP")
     _subtask(test_session, "YAP-P1", "In Progress", "BE", p.id, project_code="YAP")
 
     snap_yap = PulseService(test_session).get_pulse(project_code="YAP")
-    assert snap_yap.globals.activas >= 1
+    assert _counter(snap_yap, "in_progress").count >= 1
 
     snap_xxx = PulseService(test_session).get_pulse(project_code="XXX")
-    assert snap_xxx.globals.activas == 0
+    assert _counter(snap_xxx, "in_progress").count == 0
 
 
 def test_filtro_por_player_id(test_session: Session):
     _seed_wip_limits(test_session)
     _project(test_session)
-    p1 = _player(test_session, 13, "BE", "Uno")
-    p2 = _player(test_session, 14, "BE", "Dos")
+    p1 = _player(test_session, 23, "BE", "Uno")
+    p2 = _player(test_session, 24, "BE", "Dos")
     _subtask(test_session, "YAP-PL1", "In Progress", "BE", p1.id)
     _subtask(test_session, "YAP-PL2", "In Review", "BE", p2.id)
 
     snap = PulseService(test_session).get_pulse(player_id=p1.id)
-    assert snap.globals.activas == 1
+    assert _counter(snap, "in_progress").count == 1
 
 
-# ── Test anti-regresión: 0 escrituras ────────────────────────────────────────
+# ── Anti-regresión: 0 escrituras ───────────────────────────────────────────────
 
 
 def test_pulse_no_escribe_en_gamificacion(test_session: Session):

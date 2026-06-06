@@ -2,8 +2,9 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import type { PulseSnapshot } from "@/lib/types/pulse";
-import { PulseGlobalsBar } from "./globals-bar";
-import { WipByArea } from "./wip-by-area";
+import { FlowCountersBar } from "./flow-counters-bar";
+import { AreaCards } from "./area-cards";
+import { DevDrilldownPanel } from "./dev-drilldown";
 import { BlocksTable } from "./blocks-table";
 import { DayMovements } from "./day-movements";
 import { AgingTable } from "./aging-table";
@@ -30,6 +31,7 @@ export function PulseClient({ initialPulse, initialFilters }: Props) {
   const [filters, setFilters] = useState<Filters>(initialFilters);
   const [secondsAgo, setSecondsAgo] = useState(0);
   const [loading, setLoading] = useState(false);
+  const [drilldown, setDrilldown] = useState<{ playerId: number; name: string } | null>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const counterRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -92,7 +94,7 @@ export function PulseClient({ initialPulse, initialFilters }: Props) {
         <div>
           <h1 className="text-base font-semibold">Pulso Operativo</h1>
           <p className="text-xs text-muted-foreground">
-            Vista en tiempo real del WIP del equipo — se refresca automáticamente cada 60s
+            Vista en tiempo real del trabajo del equipo — se refresca automáticamente cada 60s
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -116,13 +118,16 @@ export function PulseClient({ initialPulse, initialFilters }: Props) {
         </div>
       ) : (
         <div className="flex-1 p-5 space-y-5 overflow-auto">
-          {/* A: Globals */}
-          <PulseGlobalsBar globals={pulse.globals} />
+          {/* CAMBIO 1: franja de contadores por estado (orden de flujo) */}
+          <FlowCountersBar counters={pulse.flow_counters} />
 
-          {/* B: WIP por área */}
+          {/* CAMBIO 2: cards por área */}
           <section>
-            <h2 className="text-sm font-semibold mb-2">WIP por área</h2>
-            <WipByArea cards={pulse.wip_by_area} />
+            <h2 className="text-sm font-semibold mb-2">Tareas por área</h2>
+            <AreaCards
+              cards={pulse.area_cards}
+              onDevClick={(playerId, name) => setDrilldown({ playerId, name })}
+            />
           </section>
 
           {/* C + E: Bloqueos + Aging (lado a lado) */}
@@ -165,6 +170,16 @@ export function PulseClient({ initialPulse, initialFilters }: Props) {
           </section>
         </div>
       )}
+
+      {/* CAMBIO 3: drill-down de dev (panel) */}
+      <DevDrilldownPanel
+        playerId={drilldown?.playerId ?? null}
+        fallbackName={drilldown?.name ?? ""}
+        open={drilldown !== null}
+        onOpenChange={(o) => {
+          if (!o) setDrilldown(null);
+        }}
+      />
     </div>
   );
 }

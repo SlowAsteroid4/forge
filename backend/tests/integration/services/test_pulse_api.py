@@ -1,10 +1,10 @@
-"""Integración: GET /api/pulse/now (UC-16 Pulso Operativo)."""
+"""Integración: GET /api/pulse/* (UC-16 Pulso Operativo, rediseño WP-16)."""
 
 from __future__ import annotations
 
 import json
 import time
-from datetime import UTC, datetime, timedelta
+from datetime import datetime
 
 import pytest
 from fastapi.testclient import TestClient
@@ -19,7 +19,6 @@ from forge.db.models.project import Project
 from forge.db.models.subtask import Subtask
 from forge.db.session import get_session
 from forge.main import app
-
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -95,6 +94,10 @@ def _seed(session: Session) -> None:
     session.commit()
 
 
+def _counter(data: dict, key: str) -> dict:
+    return next(c for c in data["flow_counters"] if c["key"] == key)
+
+
 # ── Tests ─────────────────────────────────────────────────────────────────────
 
 
@@ -107,8 +110,8 @@ def test_pulse_now_status_200(client: TestClient, session: Session):
 def test_pulse_now_tiene_todas_las_secciones(client: TestClient, session: Session):
     _seed(session)
     data = client.get("/api/pulse/now").json()
-    assert "globals" in data
-    assert "wip_by_area" in data
+    assert "flow_counters" in data
+    assert "area_cards" in data
     assert "blocks" in data
     assert "day_movements" in data
     assert "aging_critical" in data
@@ -116,32 +119,41 @@ def test_pulse_now_tiene_todas_las_secciones(client: TestClient, session: Sessio
     assert "generated_at" in data
 
 
-def test_pulse_globals_conteos_correctos(client: TestClient, session: Session):
+def test_flow_counters_conteos_correctos(client: TestClient, session: Session):
     _seed(session)
     data = client.get("/api/pulse/now").json()
-    g = data["globals"]
-    # activas: In Progress (1) + In Review (1) + Blocked (1) = 3
-    assert g["activas"] == 3
-    assert g["bloqueadas"] == 1
-    assert g["cola_ready"] == 1
+    assert [c["key"] for c in data["flow_counters"]] == [
+        "backlog", "ready", "in_progress", "in_review", "ready_for_qa", "in_qa", "done",
+    ]
+    assert _counter(data, "ready")["count"] == 1
+    assert _counter(data, "in_progress")["count"] == 1
+    assert _counter(data, "in_review")["count"] == 1
+    assert _counter(data, "done")["count"] == 1
+    # 'Code Review' mapea a 'In Review'
+    assert _counter(data, "in_review")["label"] == "Code Review"
 
 
-def test_pulse_wip_by_area_excluye_qa(client: TestClient, session: Session):
+def test_area_cards_excluye_qa_y_po(client: TestClient, session: Session):
     _seed(session)
     data = client.get("/api/pulse/now").json()
-    areas = [card["area"] for card in data["wip_by_area"]]
+    areas = [card["area"] for card in data["area_cards"]]
     assert "QA" not in areas
+    assert "PO" not in areas
 
 
-def test_pulse_wip_card_tiene_campos_por_dev(client: TestClient, session: Session):
+def test_area_card_estructura_y_conteo(client: TestClient, session: Session):
     _seed(session)
     data = client.get("/api/pulse/now").json()
-    # Todos los cards deben tener los nuevos campos
-    for card in data["wip_by_area"]:
-        assert "max_wip_individual" in card
-        assert "devs_over_limit" in card
-        assert isinstance(card["max_wip_individual"], int)
-        assert isinstance(card["devs_over_limit"], int)
+    be = next(c for c in data["area_cards"] if c["area"] == "BE")
+    # BE activas: In Progress + In Review + Blocked = 3 (Done/Backlog excluidos)
+    assert be["total_active"] == 3
+    for group in be["by_status"]:
+        assert "status" in group and "zone" in group and "count" in group
+        for task in group["tasks"]:
+            assert "jira_key" in task
+            assert "assignee_name" in task
+            assert "zone" in task
+            assert "is_aggregate_team" in task
 
 
 def test_pulse_blocks_detecta_bloqueados(client: TestClient, session: Session):
@@ -151,32 +163,43 @@ def test_pulse_blocks_detecta_bloqueados(client: TestClient, session: Session):
     assert "YAP-4" in keys
 
 
+def test_dev_drilldown_endpoint(client: TestClient, session: Session):
+    _seed(session)
+    data = client.get("/api/pulse/dev/1").json()
+    assert data["display_name"] == "DevBE"
+    # p1: In Progress + In Review + Blocked = 3 activas (Done excluido)
+    assert data["total"] == 3
+    keys = {t["jira_key"] for t in data["tasks"]}
+    assert keys == {"YAP-1", "YAP-2", "YAP-4"}
+    assert data["is_aggregate_team"] is False
+
+
 def test_pulse_filtro_area(client: TestClient, session: Session):
     _seed(session)
     data = client.get("/api/pulse/now?area=FE").json()
-    # Solo hay 1 subtask de FE (Ready), activas=0 en FE
-    assert data["globals"]["activas"] == 0
-    assert data["globals"]["cola_ready"] == 1
+    assert _counter(data, "ready")["count"] == 1
+    assert _counter(data, "in_progress")["count"] == 0
+    assert all(c["area"] == "FE" for c in data["area_cards"])
 
 
 def test_pulse_filtro_project_code(client: TestClient, session: Session):
     _seed(session)
     data_yap = client.get("/api/pulse/now?project_code=YAP").json()
-    assert data_yap["globals"]["activas"] >= 1
+    assert _counter(data_yap, "in_progress")["count"] >= 1
 
     data_xxx = client.get("/api/pulse/now?project_code=XXX").json()
-    assert data_xxx["globals"]["activas"] == 0
+    assert _counter(data_xxx, "in_progress")["count"] == 0
 
 
 def test_pulse_filtro_player_id(client: TestClient, session: Session):
     _seed(session)
     data = client.get("/api/pulse/now?player_id=2").json()
-    # Player 2 (FE) tiene solo 1 subtask en Ready (no activa en WIP)
-    assert data["globals"]["activas"] == 0
-    assert data["globals"]["cola_ready"] == 1
+    # Player 2 (FE) solo tiene 1 en Ready
+    assert _counter(data, "ready")["count"] == 1
+    assert _counter(data, "in_progress")["count"] == 0
 
 
-def test_pulse_done_excluido(client: TestClient, session: Session):
+def test_pulse_done_excluido_de_secciones(client: TestClient, session: Session):
     _seed(session)
     data = client.get("/api/pulse/now").json()
     all_keys = (
@@ -184,6 +207,9 @@ def test_pulse_done_excluido(client: TestClient, session: Session):
         + [a["jira_key"] for a in data["aging_critical"]]
         + [r["jira_key"] for r in data["ready_queue"]]
     )
+    for card in data["area_cards"]:
+        for group in card["by_status"]:
+            all_keys += [t["jira_key"] for t in group["tasks"]]
     assert "YAP-5" not in all_keys
 
 

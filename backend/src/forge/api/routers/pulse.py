@@ -9,7 +9,12 @@ from sqlalchemy.orm import Session
 from forge.db.models.audit_log import AuditLog
 from forge.db.models.subtask import Subtask
 from forge.db.session import get_session
-from forge.schemas.pulse import FlagForReviewRequest, FlagForReviewResponse, PulseSnapshot
+from forge.schemas.pulse import (
+    DevDrilldown,
+    FlagForReviewRequest,
+    FlagForReviewResponse,
+    PulseSnapshot,
+)
 from forge.services.pulse_service import PulseService
 
 router = APIRouter(tags=["pulse"])
@@ -46,6 +51,23 @@ def get_pulse_now(
     """
     service = PulseService(session)
     return service.get_pulse(areas=area, project_code=project_code, player_id=player_id)
+
+
+@router.get("/dev/{player_id}", response_model=DevDrilldown)
+def get_dev_drilldown(
+    player_id: int,
+    session: Session = Depends(get_session),
+) -> DevDrilldown:
+    """
+    UC-16 (CAMBIO 3 WP-16): Drill-down de dev.
+
+    Retorna las tareas EN PROGRESO (operativas, no terminales) del dev/cuenta-grupo,
+    cada una con su estatus y días hábiles en el estado actual.
+
+    READ-ONLY: no escribe en ninguna tabla.
+    """
+    service = PulseService(session)
+    return service.get_dev_drilldown(player_id)
 
 
 @router.post("/flag/{jira_key}", response_model=FlagForReviewResponse)

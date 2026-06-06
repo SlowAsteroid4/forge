@@ -2,6 +2,13 @@
 
 REGLA CRÍTICA: Este servicio SOLO lee. Prohibido escribir en sp_adjustments,
 leaderboard_snapshots o cualquier tabla de gamificación.
+
+Rediseño WP-16:
+  - CAMBIO 1: franja de contadores por estado en orden de flujo (Backlog→Done).
+  - CAMBIO 2: cards por área (tareas activas → expand por estado → código+dueño),
+    sin "WIP" ni semáforo de límite.
+  - CAMBIO 3: drill-down por dev (sus tareas en progreso con estatus).
+Conserva bloqueos, aging, movimientos del día y cola Ready.
 """
 
 from __future__ import annotations
@@ -10,7 +17,7 @@ import json
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import select, text
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from forge.core.time_utils import business_seconds
@@ -19,12 +26,16 @@ from forge.db.models.player import Player
 from forge.db.models.subtask import Subtask
 from forge.schemas.pulse import (
     AgingItem,
+    AreaCard,
+    AreaStatusGroup,
+    AreaTask,
     BlockItem,
     DayMovementItem,
-    PulseGlobals,
+    DevDrilldown,
+    DevTask,
+    FlowCounter,
     PulseSnapshot,
     ReadyQueueItem,
-    WipAreaCard,
 )
 
 # ── Constantes de negocio ─────────────────────────────────────────────────────
@@ -35,11 +46,14 @@ _AGING_CRITICAL_DAYS = 5.0
 _READY_QUEUE_TOP_N = 10
 _DAY_MOVEMENTS_WINDOW_HOURS = 24
 
-# Terminal: excluidos del Pulso
+# Terminal: excluidos del fetch operativo (cards, bloqueos, aging, drill-down).
 _TERMINAL = frozenset({"Done", "Backlog", "Cancelled"})
 
-# WIP del dev: estados que se cuentan para semáforo por área
-# Excluye In QA, Ready for QA, Ready (cola) y terminales
+# Cuentas-grupo agregadas (WP-15): no son devs individuales. Se etiquetan en UI.
+# HUECO conocido: no hay columna que las marque; se detectan por display_name.
+_AGGREGATE_TEAM_NAMES = frozenset({"Equipo de Producto"})
+
+# Estados que cuentan para aging crítico (conservado de WP-08/09, sin cambios).
 _WIP_STATUSES = frozenset(
     {
         "Active",
@@ -52,24 +66,68 @@ _WIP_STATUSES = frozenset(
     }
 )
 
-# Todos los estados operativos (no terminales)
-_OPERATIONAL = frozenset(
-    _WIP_STATUSES | {"In QA", "Ready for QA", "Ready"}
-)
+# ── Mapeo de estado → zona de color (paleta JPDS WP-07b, por zona) ─────────────
+# dev #60A5FA · review #C7D2FE · qa #FCA5A5 · blocked #F87171 · neutral #E5E7EB
+_STATUS_ZONE: dict[str, str] = {
+    "Backlog": "neutral",
+    "Ready": "neutral",
+    "In Progress": "dev",
+    "Active": "dev",
+    "Implementation": "dev",
+    "In Design": "dev",
+    "UI Implementation": "dev",
+    "In Review": "review",
+    "Ready for QA": "qa",
+    "In QA": "qa",
+    "Blocked": "blocked",
+    "Done": "done",
+}
+
+# ── Franja de flujo (CAMBIO 1): (key, label, [statuses reales plegados], zona) ──
+# AUDITORÍA WP-16: "Code Review" en la BD es "In Review". Los sub-estados de
+# trabajo activo (Active/Implementation/In Design/UI Implementation) se pliegan
+# en "In Progress" — el contador expone raw_statuses para que sea auditable.
+_FLOW: list[tuple[str, str, list[str], str]] = [
+    ("backlog", "Backlog", ["Backlog"], "neutral"),
+    ("ready", "Ready", ["Ready"], "neutral"),
+    (
+        "in_progress",
+        "In Progress",
+        ["In Progress", "Active", "Implementation", "In Design", "UI Implementation"],
+        "dev",
+    ),
+    ("in_review", "Code Review", ["In Review"], "review"),
+    ("ready_for_qa", "Ready for QA", ["Ready for QA"], "qa"),
+    ("in_qa", "In QA", ["In QA"], "qa"),
+    ("done", "Done", ["Done"], "done"),
+]
+
+# Orden de flujo para ordenar grupos por estado dentro de una card de área.
+_STATUS_FLOW_ORDER: dict[str, int] = {
+    "Ready": 1,
+    "In Progress": 2,
+    "Active": 2,
+    "Implementation": 2,
+    "In Design": 2,
+    "UI Implementation": 2,
+    "In Review": 3,
+    "Ready for QA": 4,
+    "In QA": 5,
+    "Blocked": 6,
+}
+
+
+def _zone(status: str) -> str:
+    return _STATUS_ZONE.get(status, "neutral")
 
 
 class PulseService:
-    """Construye el snapshot del Pulso Operativo en tiempo real.
-
-    Todas las operaciones son de lectura. Consulta la tabla subtasks directamente
-    (con LEFT JOIN a players), enriquece con horas hábiles y devuelve PulseSnapshot.
-    """
+    """Construye el snapshot del Pulso Operativo en tiempo real (read-only)."""
 
     def __init__(self, session: Session) -> None:
         self._s = session
         self._now = datetime.now(UTC)
-        self._wip_limits: dict[str, int] = {}
-        self._excluded_areas: set[str] = set()
+        self._card_areas: list[str] = []
         self._player_cache: dict[int, str] = {}
 
     # ── Punto de entrada ──────────────────────────────────────────────────────
@@ -81,7 +139,7 @@ class PulseService:
         player_id: int | None = None,
     ) -> PulseSnapshot:
         """Construye el PulseSnapshot completo con los filtros indicados."""
-        self._load_wip_config()
+        self._load_card_areas()
         self._load_player_cache()
         rows = self._fetch_operational(areas, project_code, player_id)
 
@@ -92,22 +150,59 @@ class PulseService:
                 "project_code": project_code,
                 "player_id": player_id,
             },
-            globals=self._build_globals(rows),
-            wip_by_area=self._build_wip_by_area(rows, areas),
+            flow_counters=self._build_flow_counters(areas, project_code, player_id),
+            area_cards=self._build_area_cards(rows, areas),
             blocks=self._build_blocks(rows),
             day_movements=self._build_day_movements(rows),
             aging_critical=self._build_aging(rows),
             ready_queue=self._build_ready_queue(rows),
         )
 
-    # ── Configuración WIP ─────────────────────────────────────────────────────
+    def get_dev_drilldown(self, player_id: int) -> DevDrilldown:
+        """CAMBIO 3: tareas en progreso de un dev (o cuenta-grupo) con estatus."""
+        self._load_player_cache()
+        player = self._s.get(Player, player_id)
+        if player is None:
+            return DevDrilldown(
+                player_id=player_id,
+                display_name=f"#{player_id}",
+                is_aggregate_team=False,
+                area=None,
+                total=0,
+                tasks=[],
+            )
 
-    def _load_wip_config(self) -> None:
-        stmt = select(AreaWipLimit)
-        for row in self._s.scalars(stmt).all():
-            self._wip_limits[row.area] = row.wip_limit
-            if row.exclude_from_wip:
-                self._excluded_areas.add(row.area)
+        rows = self._fetch_operational(None, None, player_id)
+        tasks = [
+            DevTask(
+                jira_key=r.jira_key,
+                summary=r.summary,
+                status=r.status,
+                zone=_zone(r.status),
+                area=r.area or "—",
+                dias_en_estado=round(
+                    self._biz_hours_in_current_state(r) / _BIZ_HOURS_PER_DAY, 1
+                ),
+            )
+            for r in rows
+        ]
+        tasks.sort(key=lambda t: t.dias_en_estado, reverse=True)
+
+        return DevDrilldown(
+            player_id=player_id,
+            display_name=player.display_name,
+            is_aggregate_team=player.display_name in _AGGREGATE_TEAM_NAMES,
+            area=player.area,
+            total=len(tasks),
+            tasks=tasks,
+        )
+
+    # ── Carga de contexto ─────────────────────────────────────────────────────
+
+    def _load_card_areas(self) -> None:
+        """Áreas que reciben card: con límite configurado y no excluidas (QA/PO)."""
+        stmt = select(AreaWipLimit).where(AreaWipLimit.exclude_from_wip.is_(False))
+        self._card_areas = sorted(row.area for row in self._s.scalars(stmt).all())
 
     def _load_player_cache(self) -> None:
         stmt = select(Player.id, Player.display_name)
@@ -134,94 +229,103 @@ class PulseService:
 
         return list(self._s.scalars(stmt).all())
 
-    # ── Helpers de nombre ─────────────────────────────────────────────────────
+    def _count_by_status(
+        self,
+        areas: list[str] | None,
+        project_code: str | None,
+        player_id: int | None,
+    ) -> dict[str, int]:
+        """Conteo por status de TODAS las subtasks (incl. Backlog/Done) con filtros."""
+        stmt = select(Subtask.status, func.count()).group_by(Subtask.status)
+        if areas:
+            stmt = stmt.where(Subtask.area.in_(areas))
+        if project_code:
+            stmt = stmt.where(Subtask.project_code == project_code)
+        if player_id is not None:
+            stmt = stmt.where(Subtask.assignee_player_id == player_id)
+        result: dict[str, int] = {}
+        for status, n in self._s.execute(stmt):
+            result[status] = n
+        return result
+
+    # ── Helpers de nombre / agregado ──────────────────────────────────────────
 
     def _name(self, player_id: int | None) -> str | None:
         if player_id is None:
             return None
         return self._player_cache.get(player_id)
 
-    # ── Sección 1: Globals ────────────────────────────────────────────────────
+    def _is_aggregate(self, player_id: int | None) -> bool:
+        name = self._name(player_id)
+        return name in _AGGREGATE_TEAM_NAMES if name else False
 
-    def _build_globals(self, rows: list[Subtask]) -> PulseGlobals:
-        activas = sum(1 for r in rows if r.status in _WIP_STATUSES)
-        bloqueadas = sum(1 for r in rows if r.status == "Blocked")
-        en_espera = 0  # "Waiting" no existe en la BD — HUECO documentado
-        cola_ready = sum(1 for r in rows if r.status == "Ready")
+    # ── CAMBIO 1: Franja de contadores por estado ─────────────────────────────
 
-        aging_days = [
-            self._aging_biz_days(r) for r in rows if r.status in _WIP_STATUSES
-        ]
-        aging_max = max(aging_days) if aging_days else 0.0
+    def _build_flow_counters(
+        self,
+        areas: list[str] | None,
+        project_code: str | None,
+        player_id: int | None,
+    ) -> list[FlowCounter]:
+        counts = self._count_by_status(areas, project_code, player_id)
+        counters: list[FlowCounter] = []
+        for key, label, raw_statuses, zone in _FLOW:
+            present = [s for s in raw_statuses if counts.get(s, 0) > 0]
+            counters.append(
+                FlowCounter(
+                    key=key,
+                    label=label,
+                    count=sum(counts.get(s, 0) for s in raw_statuses),
+                    raw_statuses=present or raw_statuses[:1],
+                    zone=zone,
+                )
+            )
+        return counters
 
-        return PulseGlobals(
-            activas=activas,
-            bloqueadas=bloqueadas,
-            en_espera=en_espera,
-            cola_ready=cola_ready,
-            aging_max_dias_habiles=round(aging_max, 1),
-        )
+    # ── CAMBIO 2: Cards por área ──────────────────────────────────────────────
 
-    # ── Sección 2: WIP por área ───────────────────────────────────────────────
-
-    def _build_wip_by_area(
+    def _build_area_cards(
         self, rows: list[Subtask], requested_areas: list[str] | None
-    ) -> list[WipAreaCard]:
-        semaphore_areas = sorted(
-            a for a in self._wip_limits if a not in self._excluded_areas
-        )
+    ) -> list[AreaCard]:
+        areas = self._card_areas
         if requested_areas:
-            semaphore_areas = [a for a in semaphore_areas if a in requested_areas]
+            areas = [a for a in areas if a in requested_areas]
 
-        cards: list[WipAreaCard] = []
-        for area in semaphore_areas:
-            # Solo subtasks ASIGNADAS cuentan para WIP (sin asignee no pertenecen a nadie)
-            area_rows = [
-                r for r in rows
-                if r.area == area and r.status in _WIP_STATUSES and r.assignee_player_id is not None
-            ]
-            wip_limit = self._wip_limits.get(area, 5)
+        cards: list[AreaCard] = []
+        for area in areas:
+            area_rows = [r for r in rows if r.area == area]
 
-            # WIP por dev individual
-            wip_per_dev: dict[int, int] = {}
+            by_status: dict[str, list[AreaTask]] = {}
             for r in area_rows:
-                pid = r.assignee_player_id
-                if pid is not None:
-                    wip_per_dev[pid] = wip_per_dev.get(pid, 0) + 1
+                by_status.setdefault(r.status, []).append(
+                    AreaTask(
+                        jira_key=r.jira_key,
+                        summary=r.summary,
+                        status=r.status,
+                        zone=_zone(r.status),
+                        assignee_name=self._name(r.assignee_player_id),
+                        assignee_player_id=r.assignee_player_id,
+                        is_aggregate_team=self._is_aggregate(r.assignee_player_id),
+                    )
+                )
 
-            wip_actual = len(area_rows)
-            max_wip_individual = max(wip_per_dev.values()) if wip_per_dev else 0
-            devs_over_limit = sum(1 for w in wip_per_dev.values() if w > wip_limit)
-
-            # Semáforo basado en WIP INDIVIDUAL máximo vs límite por dev
-            pct = round(max_wip_individual / wip_limit * 100, 1) if wip_limit > 0 else 0.0
-            semaforo = _semaforo(pct)
+            groups = [
+                AreaStatusGroup(
+                    status=status,
+                    zone=_zone(status),
+                    count=len(tasks),
+                    tasks=sorted(tasks, key=lambda t: t.jira_key),
+                )
+                for status, tasks in by_status.items()
+            ]
+            groups.sort(key=lambda g: _STATUS_FLOW_ORDER.get(g.status, 99))
 
             cards.append(
-                WipAreaCard(
-                    area=area,
-                    wip_actual=wip_actual,
-                    wip_limit=wip_limit,
-                    max_wip_individual=max_wip_individual,
-                    devs_over_limit=devs_over_limit,
-                    pct_utilization=pct,
-                    semaforo=semaforo,
-                    activas=[
-                        {
-                            "jira_key": r.jira_key,
-                            "summary": r.summary,
-                            "status": r.status,
-                            "assignee_name": self._name(r.assignee_player_id),
-                            "assignee_player_id": r.assignee_player_id,
-                        }
-                        for r in area_rows
-                    ],
-                    assignee_count=len(wip_per_dev),
-                )
+                AreaCard(area=area, total_active=len(area_rows), by_status=groups)
             )
         return cards
 
-    # ── Sección 3: Bloqueos ───────────────────────────────────────────────────
+    # ── Sección 3: Bloqueos (conservado) ──────────────────────────────────────
 
     def _build_blocks(self, rows: list[Subtask]) -> list[BlockItem]:
         blocked = [r for r in rows if r.status == "Blocked"]
@@ -242,7 +346,7 @@ class PulseService:
             )
         return sorted(items, key=lambda x: x.horas_bloqueado, reverse=True)
 
-    # ── Sección 4: Movimientos del día ────────────────────────────────────────
+    # ── Sección 4: Movimientos del día (conservado) ───────────────────────────
 
     def _build_day_movements(self, rows: list[Subtask]) -> list[DayMovementItem]:
         cutoff = self._now - timedelta(hours=_DAY_MOVEMENTS_WINDOW_HOURS)
@@ -267,7 +371,7 @@ class PulseService:
                             )
         return sorted(movements, key=lambda m: m.moved_at, reverse=True)
 
-    # ── Sección 5: Aging crítico ──────────────────────────────────────────────
+    # ── Sección 5: Aging crítico (conservado) ─────────────────────────────────
 
     def _build_aging(self, rows: list[Subtask]) -> list[AgingItem]:
         active_rows = [r for r in rows if r.status in _WIP_STATUSES]
@@ -290,7 +394,7 @@ class PulseService:
                 )
         return sorted(critical, key=lambda x: x.dias_en_estado, reverse=True)
 
-    # ── Sección 6: Cola Ready ─────────────────────────────────────────────────
+    # ── Sección 6: Cola Ready (conservado) ────────────────────────────────────
 
     def _build_ready_queue(self, rows: list[Subtask]) -> list[ReadyQueueItem]:
         ready = [r for r in rows if r.status == "Ready"]
@@ -308,7 +412,6 @@ class PulseService:
                     priority=r.priority,
                 )
             )
-        # Ordenar: priority real (Highest>High>Medium>Low>Lowest) + antigüedad en Ready
         items.sort(key=lambda x: (_priority_order(x.priority), -x.tiempo_en_ready_horas))
         return items[:_READY_QUEUE_TOP_N]
 
@@ -321,8 +424,11 @@ class PulseService:
             last_change = row.updated_at  # fallback: updated_at como proxy
         if last_change is None:
             return 0.0
-        # Asegurar datetime naive (business_seconds espera naive o aware, gestiona ambos)
-        ref = last_change if isinstance(last_change, datetime) else datetime.combine(last_change, datetime.min.time())
+        ref = (
+            last_change
+            if isinstance(last_change, datetime)
+            else datetime.combine(last_change, datetime.min.time())
+        )
         ref_naive = ref.replace(tzinfo=None) if ref.tzinfo else ref
         now_naive = self._now.replace(tzinfo=None)
         secs = business_seconds(ref_naive, now_naive)
@@ -333,7 +439,11 @@ class PulseService:
         if row.created_at is None:
             return 0.0
         created = row.created_at
-        created_naive = created.replace(tzinfo=None) if hasattr(created, "tzinfo") and created.tzinfo else created
+        created_naive = (
+            created.replace(tzinfo=None)
+            if hasattr(created, "tzinfo") and created.tzinfo
+            else created
+        )
         now_naive = self._now.replace(tzinfo=None)
         secs = business_seconds(created_naive, now_naive)
         return secs / 3600.0 / _BIZ_HOURS_PER_DAY
@@ -354,14 +464,6 @@ _PRIORITY_ORDER: dict[str, int] = {
 def _priority_order(priority: str | None) -> int:
     """Orden numérico ascendente: Highest=1, sin prioridad=6."""
     return _PRIORITY_ORDER.get(priority or "", 6)
-
-
-def _semaforo(pct: float) -> str:
-    if pct < 80:
-        return "verde"
-    if pct <= 100:
-        return "amarillo"
-    return "rojo"
 
 
 def _parse_changelog(raw: str | None) -> list[dict[str, Any]]:

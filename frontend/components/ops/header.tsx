@@ -2,6 +2,7 @@
 
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
+import { ThemeToggle } from "@/components/theme-toggle";
 import { RefreshCw } from "lucide-react";
 import { useRouter, useSearchParams, usePathname } from "next/navigation";
 import { useTransition } from "react";
@@ -94,6 +95,7 @@ export function OpsHeader({ projects, lastSyncAt }: OpsHeaderProps) {
           <RefreshCw size={13} />
           Sincronizar
         </Button>
+        <ThemeToggle />
       </div>
     </header>
   );

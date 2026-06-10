@@ -524,6 +524,74 @@ class TestApartado:
         # 'Sin apartado' siempre va al final
         assert svc.apartados()[-1]["apartado"] == SIN_APARTADO
 
+    def test_apartado_with_epic_but_no_subtasks_still_listed(
+        self, test_session: Session
+    ) -> None:
+        """WP-21: un apartado real (épica con prefijo) aparece aunque tenga 0 subtasks.
+
+        Reproduce el bug original: [YAPI]/[CAY] existían como épicas pero, al no tener
+        subtasks, la lista (derivada de conteos) los omitía. Ahora se derivan de épicas.
+        """
+        self._seed(test_session)  # crea épica [YPAPP] con 2 subtasks + 1 sin apartado
+        # Épica [YAPI] con story pero SIN subtasks → debe aparecer con conteo 0.
+        eapi = _epic(test_session, "E-API", "[YAPI] Transacciones")
+        _story(test_session, "ST-API", eapi.jira_key)
+        test_session.commit()
+
+        svc = AnalyticsService(test_session)
+        out = {r["apartado"]: r["subtask_count"] for r in svc.apartados()}
+        assert out["YAPI"] == 0  # presente pese a 0 subtasks
+        assert out["YPAPP"] == 2
+
+    def test_known_apartados_ordered_first(self, test_session: Session) -> None:
+        """WP-21: conocidos primero (en orden KNOWN_APARTADOS), 'Sin apartado' al final."""
+        # Un legítimo no-conocido (volumen alto → no es typo) + dos conocidos.
+        for key, summary in (
+            ("E-NEW", "[ZZZNEW] Iniciativa nueva"),
+            ("E-PLD", "[PLD] Clientes"),
+            ("E-APP", "[YPAPP] Cuenta"),
+        ):
+            e = _epic(test_session, key, summary)
+            s = _story(test_session, f"ST-{key}", e.jira_key)
+            for i in range(3):  # 3 subtasks c/u → volumen suficiente, no marcado como typo
+                sub = _subtask(test_session, f"{key}-{i}")
+                sub.parent_story_key = s.jira_key
+        test_session.commit()
+
+        svc = AnalyticsService(test_session)
+        order = [r["apartado"] for r in svc.apartados()]
+        # YPAPP y PLD (conocidos) van antes que ZZZNEW (no-conocido legítimo).
+        assert order.index("YPAPP") < order.index("PLD") < order.index("ZZZNEW")
+
+    def test_unknown_legit_prefix_shown_not_hidden(self, test_session: Session) -> None:
+        """WP-21: un prefijo nuevo legítimo se muestra (no se esconde) y no es typo."""
+        e = _epic(test_session, "E-NEW", "[ZZZNEW] Iniciativa")
+        s = _story(test_session, "ST-NEW", e.jira_key)
+        for i in range(5):
+            sub = _subtask(test_session, f"NEW-{i}")
+            sub.parent_story_key = s.jira_key
+        test_session.commit()
+
+        svc = AnalyticsService(test_session)
+        row = next(r for r in svc.apartados() if r["apartado"] == "ZZZNEW")
+        assert row["subtask_count"] == 5
+        assert row["known"] is False
+        assert row["suspected_typo"] is False
+
+    def test_suspected_typo_flagged_not_hidden(self, test_session: Session) -> None:
+        """WP-21: un prefijo mal escrito ([YPAP] vs [YPAPP]) con poco volumen se marca."""
+        e = _epic(test_session, "E-TYPO", "[YPAP] Cuneta")  # typo de YPAPP
+        s = _story(test_session, "ST-TYPO", e.jira_key)
+        sub = _subtask(test_session, "TYPO-1")
+        sub.parent_story_key = s.jira_key
+        test_session.commit()
+
+        svc = AnalyticsService(test_session)
+        row = next((r for r in svc.apartados() if r["apartado"] == "YPAP"), None)
+        assert row is not None  # NO se esconde
+        assert row["known"] is False
+        assert row["suspected_typo"] is True
+
     def test_filter_restricts_results(self, test_session: Session) -> None:
         self._seed(test_session)
         svc = AnalyticsService(test_session)

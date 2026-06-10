@@ -181,6 +181,10 @@ export type CycleLeadGrouping = "cycle" | "month" | "historical";
 export interface ApartadoOption {
   apartado: string;
   subtask_count: number;
+  /** Está en la lista canónica de apartados (red de seguridad WP-21). */
+  known?: boolean;
+  /** Prefijo no-conocido y parecido a uno conocido: posible typo en el summary de la épica. */
+  suspected_typo?: boolean;
 }
 
 export interface ApartadosResponse {

@@ -46,7 +46,11 @@ export function ApartadoFilter({ options, current }: ApartadoFilterProps) {
         <button
           key={opt.apartado}
           onClick={() => select(opt.apartado)}
-          title={`${opt.subtask_count} subtasks`}
+          title={
+            opt.suspected_typo
+              ? `${opt.subtask_count} subtasks · posible typo en el summary de la épica (revisar)`
+              : `${opt.subtask_count} subtasks`
+          }
           className={cn(
             "px-3 py-1.5 rounded-md text-xs font-medium transition-colors",
             current === opt.apartado
@@ -54,6 +58,7 @@ export function ApartadoFilter({ options, current }: ApartadoFilterProps) {
               : "text-muted-foreground hover:text-foreground",
           )}
         >
+          {opt.suspected_typo && <span className="mr-0.5 text-amber-500">⚠</span>}
           {opt.apartado}
           <span className="ml-1 text-[10px] text-muted-foreground">{opt.subtask_count}</span>
         </button>

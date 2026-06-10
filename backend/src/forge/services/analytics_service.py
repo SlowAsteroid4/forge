@@ -34,6 +34,17 @@ _DEV_AREAS = frozenset({"BE", "FE", "DESIGN", "DB", "QA"})
 # "Version Container" de release, que no llevan prefijo de área.
 SIN_APARTADO = "Sin apartado"
 
+# WP-21 — Red de seguridad para la derivación dinámica de apartados. NO es una
+# lista que filtre lo que se muestra (los apartados se derivan de los datos): sirve
+# para (a) ORDENAR los conocidos primero, en este orden, y (b) DETECTAR prefijos
+# sospechosos (typos en el summary de una épica, p. ej. [YPAP] en vez de [YPAPP]).
+# Un prefijo nuevo y legítimo que no esté aquí igual se muestra (no se esconde).
+KNOWN_APARTADOS: tuple[str, ...] = ("YAPI", "YPAPP", "YPNX", "CAY", "PLD")
+
+# Un apartado no-conocido con <= N subtasks y parecido a un conocido se marca como
+# sospechoso de typo (para revisión), en vez de crear un "apartado fantasma" silencioso.
+_TYPO_MAX_SUBTASKS = 2
+
 
 class AnalyticsService:
     """Analíticas de flujo y cuellos de botella para Forge Ops.
@@ -440,26 +451,58 @@ class AnalyticsService:
     # ──────────────────────────────────────────────────────────────
 
     def apartados(self) -> list[dict[str, Any]]:
-        """Lista de apartados detectados (prefijo [XXX] de la épica) + conteo de subtasks.
+        """Apartados derivados dinámicamente del prefijo [XXX] de las épicas + conteo.
 
-        Incluye SIEMPRE 'Sin apartado' como categoría de primera clase si hay subtasks
-        sin prefijo. Orden: apartados reales por conteo desc, 'Sin apartado' al final.
+        WP-21 — el universo de apartados se deriva de los prefijos que existen en las
+        ÉPICAS (fuente canónica), no de qué subtasks ya hay. Así un apartado real cuyo
+        trabajo aún no empieza (p. ej. [YAPI]/[CAY], con épicas pero 0 subtasks Done)
+        aparece igual, con conteo 0 — antes desaparecía porque la lista se derivaba de
+        los conteos de subtasks.
+
+        Orden: conocidos (KNOWN_APARTADOS) primero en ese orden, luego otros legítimos
+        (alfabético), y 'Sin apartado' al final si hay subtasks sin prefijo. Cada
+        apartado trae `known` y `suspected_typo` (no se esconde nada; los sospechosos
+        de typo solo se marcan para revisión).
         """
+        # Universo canónico: todo prefijo [XXX] presente en alguna épica.
+        epic_summaries = self._s.execute(select(Epic.summary)).scalars().all()
+        epic_apartados = {ap for s in epic_summaries if (ap := _apartado_of_summary(s))}
+
+        # Conteo de subtasks por apartado (vía story → epic). 'Sin apartado' incluido.
         smap = self._story_apartado_map()
         story_keys = self._s.execute(select(Subtask.parent_story_key)).scalars().all()
-
         counts: dict[str, int] = {}
         for sk in story_keys:
             ap = smap.get(sk, SIN_APARTADO) if sk else SIN_APARTADO
             counts[ap] = counts.get(ap, 0) + 1
 
-        real = sorted(
-            ((a, n) for a, n in counts.items() if a != SIN_APARTADO),
-            key=lambda kv: -kv[1],
-        )
-        result = [{"apartado": a, "subtask_count": n} for a, n in real]
-        if SIN_APARTADO in counts:
-            result.append({"apartado": SIN_APARTADO, "subtask_count": counts[SIN_APARTADO]})
+        # Universo = prefijos de épica ∪ apartados con subtasks (red por si un prefijo
+        # vino de la cadena pero su épica ya no está; no se pierde el dato).
+        universe = (epic_apartados | set(counts)) - {SIN_APARTADO}
+
+        known = [a for a in KNOWN_APARTADOS if a in universe]
+        others = sorted(universe - set(KNOWN_APARTADOS))
+
+        result: list[dict[str, Any]] = []
+        for a in known + others:
+            n = counts.get(a, 0)
+            result.append(
+                {
+                    "apartado": a,
+                    "subtask_count": n,
+                    "known": a in KNOWN_APARTADOS,
+                    "suspected_typo": _is_suspected_typo(a, n),
+                }
+            )
+        if counts.get(SIN_APARTADO):
+            result.append(
+                {
+                    "apartado": SIN_APARTADO,
+                    "subtask_count": counts[SIN_APARTADO],
+                    "known": True,
+                    "suspected_typo": False,
+                }
+            )
         return result
 
     def dev_list(
@@ -1101,6 +1144,55 @@ def _apartado_of_summary(summary: str | None) -> str | None:
     if not inner or inner[0].isdigit():
         return None
     return inner
+
+
+def _is_suspected_typo(apartado: str, subtask_count: int) -> bool:
+    """Marca un apartado como posible typo del summary de una épica.
+
+    Heurística (WP-21): no es conocido, tiene poco volumen (<= _TYPO_MAX_SUBTASKS)
+    y se parece a uno conocido (substring o distancia de edición 1, p. ej. 'YPAP'
+    vs 'YPAPP'). No lo esconde: lo separa para revisión. Un apartado nuevo legítimo
+    (volumen real o sin parecido a un conocido) no se marca.
+    """
+    if apartado in KNOWN_APARTADOS or apartado == SIN_APARTADO:
+        return False
+    if subtask_count > _TYPO_MAX_SUBTASKS:
+        return False
+    return any(_looks_similar(apartado, k) for k in KNOWN_APARTADOS)
+
+
+def _looks_similar(a: str, b: str) -> bool:
+    """True si a y b se parecen: uno contenido en el otro, o distancia de edición ≤ 1."""
+    if a == b:
+        return False
+    if a in b or b in a:
+        return True
+    return _edit_distance_le1(a, b)
+
+
+def _edit_distance_le1(a: str, b: str) -> bool:
+    """¿La distancia de edición (Levenshtein) entre a y b es ≤ 1?"""
+    if a == b:
+        return True
+    la, lb = len(a), len(b)
+    if abs(la - lb) > 1:
+        return False
+    if la == lb:  # una sola sustitución permitida
+        return sum(x != y for x, y in zip(a, b)) <= 1
+    # longitudes difieren en 1: ¿una sola inserción/eliminación?
+    shorter, longer = (a, b) if la < lb else (b, a)
+    i = j = 0
+    skipped = False
+    while i < len(shorter) and j < len(longer):
+        if shorter[i] == longer[j]:
+            i += 1
+            j += 1
+        elif skipped:
+            return False
+        else:
+            skipped = True
+            j += 1
+    return True
 
 
 def _canonical_cycle_hours(

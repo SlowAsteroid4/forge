@@ -224,10 +224,17 @@ class CanonicalTimeResponse(BaseModel):
 
 
 class ApartadoOption(BaseModel):
-    """Un apartado (sub-división de YAP) con su conteo de subtasks."""
+    """Un apartado (sub-división de YAP) con su conteo de subtasks.
+
+    `known`: está en la lista canónica de apartados (red de seguridad WP-21).
+    `suspected_typo`: prefijo no-conocido, poco volumen y parecido a un conocido →
+    posible error de tipeo en el summary de la épica (se muestra, marcado para revisión).
+    """
 
     apartado: str
     subtask_count: int
+    known: bool = True
+    suspected_typo: bool = False
 
 
 class ApartadosResponse(BaseModel):

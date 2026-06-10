@@ -151,10 +151,13 @@ def test_close_month_creates_record_and_adjustment(test_session: Session) -> Non
 
 
 def test_close_month_requires_4_closed_cycles(test_session: Session) -> None:
-    """AC-17.6: mes con solo 3 ciclos cerrados con MVP es rechazado."""
+    """AC-17.6: mes (que no es el primero) con solo 3 ciclos cerrados con MVP es rechazado."""
     p = _player(test_session, idx=1)
     admin = _admin(test_session)
-    # Solo 3 ciclos (no llegan a 4)
+    # Ciclo con MVP en un mes previo (abril) para que mayo NO sea el primer mes de la
+    # cadencia y aplique el gate pleno de >=4 (no la excepción de primer mes).
+    _cycle(test_session, month_start=4, week=14, day_start=6, status="closed", mvp_player_id=p.id)
+    # Solo 3 ciclos en mayo (no llegan a 4)
     for week, day in [(19, 4), (20, 11), (21, 18)]:
         _cycle(test_session, week=week, day_start=day, status="closed", mvp_player_id=p.id)
     _ach04(test_session)
@@ -165,6 +168,26 @@ def test_close_month_requires_4_closed_cycles(test_session: Session) -> None:
 
     errors = exc_info.value.details.get("blocking_errors", [])
     assert any("se requieren 4" in e for e in errors)
+
+
+def test_close_month_first_month_exception_allows_one_cycle(test_session: Session) -> None:
+    """Excepción de primer mes: el primer mes con MVP semanal puede cerrar con <4 ciclos."""
+    p = _player(test_session, idx=1)
+    admin = _admin(test_session)
+    # Único mes con MVP en toda la BD -> mayo es el primer mes de la cadencia.
+    _cycle(test_session, week=22, day_start=25, status="closed", mvp_player_id=p.id)
+    _ach04(test_session)
+
+    svc = MonthlyMvpService(test_session)
+    summary = svc.get_month_close_summary(2026, 5)
+    assert summary["can_close"] is True
+    assert any("primer mes" in w.lower() for w in summary["warnings"])
+
+    record = svc.close_month(
+        2026, 5, p.id, "Primer mes de la cadencia mensual: cierre con un solo ciclo cerrado", admin.id
+    )
+    assert record.player_id == p.id
+    assert record.sp_reward == 10
 
 
 def test_close_month_blocking_rule_non_weekly_mvp(test_session: Session) -> None:

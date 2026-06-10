@@ -37,6 +37,12 @@ _EDIT_WINDOW_BIZ_HOURS = 72.0
 # CANDIDATOS: DISTINCT mvp_player_id de esos ciclos (puede ser < 4 si alguien repitió).
 _MIN_CLOSED_CYCLES_FOR_CLOSE = 4
 
+# Excepción de primer mes: la cadencia mensual recién arranca en el primer mes que
+# tuvo MVP semanal asignado, por lo que ese mes puede no haber alcanzado 4 ciclos
+# completos. Solo para ese mes se relaja el gate a >=1; los meses siguientes
+# mantienen el umbral pleno de _MIN_CLOSED_CYCLES_FOR_CLOSE.
+_FIRST_MONTH_MIN_CYCLES = 1
+
 
 class MonthlyMvpService:
     def __init__(self, session: Session) -> None:
@@ -143,14 +149,28 @@ class MonthlyMvpService:
 
         # Validaciones bloqueantes
         blocking_errors: list[str] = []
+        warnings: list[str] = []
 
-        # 1. AC-17.6: gate de >=4 ciclos del mes en closed/archived con MVP semanal asignado
+        # 1. AC-17.6: gate de >=4 ciclos del mes en closed/archived con MVP semanal asignado.
+        #    Excepción: el primer mes con MVP semanal (arranque de la cadencia) solo
+        #    requiere >=1, ya que el ritual recién comienza ahí.
         cycles_with_mvp = [c for c in cycles if c.status in ("closed", "archived") and c.mvp_player_id is not None]
         n_closed_with_mvp = len(cycles_with_mvp)
-        if n_closed_with_mvp < _MIN_CLOSED_CYCLES_FOR_CLOSE:
+        is_first_month = self._first_mvp_month() == (year, month)
+        required_cycles = (
+            _FIRST_MONTH_MIN_CYCLES if is_first_month else _MIN_CLOSED_CYCLES_FOR_CLOSE
+        )
+        if n_closed_with_mvp < required_cycles:
             blocking_errors.append(
                 f"Este mes tiene {n_closed_with_mvp} ciclo(s) cerrado(s) con MVP semanal; "
-                f"se requieren {_MIN_CLOSED_CYCLES_FOR_CLOSE} para el cierre mensual."
+                f"se requieren {required_cycles} para el cierre mensual."
+            )
+        elif is_first_month and n_closed_with_mvp < _MIN_CLOSED_CYCLES_FOR_CLOSE:
+            warnings.append(
+                f"Excepción de primer mes: la cadencia mensual arranca en {year}-{month:02d}, "
+                f"por lo que se permite cerrar con {n_closed_with_mvp} ciclo(s) en lugar de "
+                f"{_MIN_CLOSED_CYCLES_FOR_CLOSE}. Los meses siguientes requerirán "
+                f"{_MIN_CLOSED_CYCLES_FOR_CLOSE}."
             )
 
         # 2. No debe existir ya un cierre mensual
@@ -160,8 +180,7 @@ class MonthlyMvpService:
                 f"(player_id={existing.player_id}, period={existing.period_label})."
             )
 
-        # Warnings
-        warnings: list[str] = []
+        # Warnings adicionales
         active_in_month = by_status.get("active", [])
         if active_in_month:
             warnings.append(
@@ -534,6 +553,28 @@ class MonthlyMvpService:
             extract("month", Cycle.start_date) == month,
         ).order_by(Cycle.start_date.asc())
         return list(self._session.scalars(stmt))
+
+    def _first_mvp_month(self) -> tuple[int, int] | None:
+        """(year, month) del primer ciclo (por start_date) con MVP semanal asignado.
+
+        Marca el arranque de la cadencia mensual: el ritual de cierre mensual recién
+        empieza ahí, por lo que ese mes puede no tener los 4 ciclos completos y se le
+        aplica la excepción de primer mes.
+        """
+        from sqlalchemy import extract
+
+        row = self._session.execute(
+            select(
+                extract("year", Cycle.start_date),
+                extract("month", Cycle.start_date),
+            )
+            .where(Cycle.mvp_player_id.is_not(None))
+            .order_by(Cycle.start_date.asc())
+            .limit(1)
+        ).first()
+        if row is None:
+            return None
+        return int(row[0]), int(row[1])
 
     def _get_existing_monthly(self, year: int, month: int) -> MvpMonthly | None:
         return self._session.scalar(

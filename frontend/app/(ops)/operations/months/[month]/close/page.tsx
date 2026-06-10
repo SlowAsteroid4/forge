@@ -1,6 +1,8 @@
 export const dynamic = "force-dynamic";
 
+import Link from "next/link";
 import { notFound } from "next/navigation";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { api } from "@/lib/api";
 import type { MonthCloseSummary, MonthCycleInfo } from "@/lib/types/monthly-mvp";
@@ -8,6 +10,13 @@ import { MonthCloseClient } from "@/components/ops/months/month-close-client";
 
 interface PageProps {
   params: Promise<{ month: string }>;
+}
+
+/** Desplaza un mes "YYYY-MM" en `delta` meses y devuelve "YYYY-MM". */
+function shiftMonth(month: string, delta: number): string {
+  const [year, mon] = month.split("-").map(Number);
+  const d = new Date(year, mon - 1 + delta, 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 }
 
 function KPICard({ label, value }: { label: string; value: string | number }) {
@@ -62,6 +71,25 @@ export default async function MonthClosePage({ params }: PageProps) {
             <p className="text-xs text-muted-foreground mt-0.5">
               Elige el MVP del Mes entre los MVPs semanales del período.
             </p>
+          </div>
+          {/* Navegación entre meses */}
+          <div className="flex items-center gap-1 shrink-0">
+            <Link
+              href={`/operations/months/${shiftMonth(month, -1)}/close`}
+              className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-xs hover:bg-muted transition-colors"
+              aria-label="Mes anterior"
+            >
+              <ChevronLeft size={14} />
+              {shiftMonth(month, -1)}
+            </Link>
+            <Link
+              href={`/operations/months/${shiftMonth(month, 1)}/close`}
+              className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-xs hover:bg-muted transition-colors"
+              aria-label="Mes siguiente"
+            >
+              {shiftMonth(month, 1)}
+              <ChevronRight size={14} />
+            </Link>
           </div>
         </div>
 

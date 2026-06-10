@@ -24,6 +24,12 @@ import {
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api";
 
+/** Mes actual en formato YYYY-MM para enlaces de cierre mensual. */
+function currentMonthParam(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
 interface NavItem {
   label: string;
   href: string;
@@ -83,7 +89,7 @@ const navSections: NavSection[] = [
       },
       {
         label: "Cierre mensual",
-        href: "/operations/months/2026-05/close",
+        href: `/operations/months/${currentMonthParam()}/close`,
         icon: <Crown size={16} />,
       },
       {

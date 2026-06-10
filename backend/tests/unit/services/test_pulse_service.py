@@ -64,6 +64,17 @@ def _project(session: Session) -> Project:
     return p
 
 
+# La card del Pulso se deriva del issue_type, no del área del assignee. Para
+# tests que expresan intención por `area`, mapeamos área → issue_type canónico.
+_AREA_TO_ISSUE_TYPE = {
+    "BE": "Backend Sub-task",
+    "FE": "Frontend Sub-Task",
+    "DB": "Database Sub-task",
+    "DESIGN": "Design Sub-task",
+    "BUG": "Bug Sub-task",
+}
+
+
 def _subtask(
     session: Session,
     key: str,
@@ -73,6 +84,7 @@ def _subtask(
     project_code: str = "YAP",
     created_days_ago: int = 1,
     changelog_entries: list[dict] | None = None,
+    issue_type: str | None = None,
 ) -> Subtask:
     now = datetime.utcnow()
     cl_data = {"histories": changelog_entries or []}
@@ -84,7 +96,7 @@ def _subtask(
         assignee_player_id=player_id,
         project_code=project_code,
         last_synced_at=now,
-        issue_type="Sub-task",
+        issue_type=issue_type or _AREA_TO_ISSUE_TYPE.get(area, "Backend Sub-task"),
         raw_changelog=json.dumps(cl_data),
     )
     session.add(s)
@@ -202,7 +214,8 @@ def test_area_card_agrupa_por_estado(test_session: Session):
     assert t.zone == "dev"
 
 
-def test_area_card_excluye_backlog_y_done(test_session: Session):
+def test_area_card_muestra_backlog_excluye_done(test_session: Session):
+    """Backlog aparece en by_status pero no cuenta en total_active. Done siempre excluido."""
     _seed_wip_limits(test_session)
     _project(test_session)
     p = _player(test_session, 5, "BE", "DevB")
@@ -211,8 +224,52 @@ def test_area_card_excluye_backlog_y_done(test_session: Session):
     _subtask(test_session, "YAP-DN", "Done", "BE", p.id)
 
     be = next(c for c in PulseService(test_session).get_pulse().area_cards if c.area == "BE")
-    assert be.total_active == 1
-    assert all(g.status not in ("Backlog", "Done") for g in be.by_status)
+    assert be.total_active == 1, "Solo In Progress cuenta como activa"
+    statuses = {g.status for g in be.by_status}
+    assert "Backlog" in statuses, "Backlog debe aparecer en el desglose de la card"
+    assert "Done" not in statuses, "Done nunca aparece en la card"
+
+
+def test_card_se_deriva_del_issue_type_no_del_area_del_assignee(test_session: Session):
+    """Regresión YAP-877: una Database Sub-task hecha por un dev de BE debe caer
+    en la card DB, NO en BE. La card se decide por issue_type, no por assignee."""
+    _seed_wip_limits(test_session)
+    test_session.add(AreaWipLimit(area="BUG", wip_limit=3, exclude_from_wip=False))
+    test_session.commit()
+    _project(test_session)
+    be_dev = _player(test_session, 5, "BE", "DevBE")
+
+    # Todas asignadas a un dev cuya área (assignee) es BE:
+    _subtask(test_session, "YAP-877", "In Review", player_id=be_dev.id, issue_type="Database Sub-task")
+    _subtask(test_session, "YAP-BE1", "In Progress", player_id=be_dev.id, issue_type="Backend Sub-task")
+    _subtask(test_session, "YAP-BUG1", "In QA", player_id=be_dev.id, issue_type="Bug")
+    _subtask(test_session, "YAP-DB2", "In Review", player_id=be_dev.id, issue_type="Database")
+
+    cards = {c.area: c for c in PulseService(test_session).get_pulse().area_cards}
+
+    db_keys = {t.jira_key for g in cards["DB"].by_status for t in g.tasks}
+    be_keys = {t.jira_key for g in cards["BE"].by_status for t in g.tasks}
+    bug_keys = {t.jira_key for g in cards["BUG"].by_status for t in g.tasks}
+
+    assert "YAP-877" in db_keys, "Database Sub-task debe ir a DB"
+    assert "YAP-DB2" in db_keys, "Database (standalone) debe ir a DB"
+    assert "YAP-877" not in be_keys, "Database Sub-task NO debe contaminar BE"
+    assert be_keys == {"YAP-BE1"}, "BE solo contiene Backend Sub-task"
+    assert bug_keys == {"YAP-BUG1"}, "Bug va a BUG"
+
+
+def test_task_generico_no_aparece_en_ninguna_card(test_session: Session):
+    """Tipos sin disciplina (Task) se excluyen del Pulso por completo."""
+    _seed_wip_limits(test_session)
+    _project(test_session)
+    p = _player(test_session, 5, "BE", "DevBE")
+    _subtask(test_session, "YAP-T1", "In Progress", player_id=p.id, issue_type="Task")
+    _subtask(test_session, "YAP-CO", "In Progress", player_id=p.id, issue_type="Coordination")
+
+    cards = PulseService(test_session).get_pulse().area_cards
+    all_keys = {t.jira_key for c in cards for g in c.by_status for t in g.tasks}
+    assert "YAP-T1" not in all_keys, "Task no pertenece a ninguna card"
+    assert "YAP-CO" not in all_keys, "Coordination excluida"
 
 
 def test_area_cards_excluyen_qa_y_po(test_session: Session):
@@ -417,3 +474,149 @@ def test_pulse_no_escribe_en_gamificacion(test_session: Session):
 
     assert _count("sp_adjustments") == before_sp, "PulseService escribió en sp_adjustments!"
     assert _count("leaderboard_snapshots") == before_lb, "PulseService escribió en leaderboard_snapshots!"
+
+
+# ── WP-20: WIP canónico + semáforo ────────────────────────────────────────────
+
+
+def test_wip_alondra_golden_case(test_session: Session):
+    """CASO PM: Alondra (DB) 1 In Progress + 1 In Code + 4 In Review → WIP=2, Review=4.
+    Auditado contra Jira 2026-06-09: YAP-979 In Progress, YAP-507 In Code, YAP-847/901/902/903 In Review.
+    WIP=2 porque In Code cuenta igual que In Progress (estado activo de DB en Jira).
+    Semáforo verde: WIP=2 < límite DB=5."""
+    _seed_wip_limits(test_session)
+    _project(test_session)
+    alondra = _player(test_session, 100, "DB", "Alondra DB")
+    _subtask(test_session, "YAP-A1", "In Progress", "DB", alondra.id)
+    _subtask(test_session, "YAP-A2", "In Code", "DB", alondra.id)
+    _subtask(test_session, "YAP-A3", "In Review", "DB", alondra.id)
+    _subtask(test_session, "YAP-A4", "In Review", "DB", alondra.id)
+    _subtask(test_session, "YAP-A5", "In Review", "DB", alondra.id)
+    _subtask(test_session, "YAP-A6", "In Review", "DB", alondra.id)
+
+    dd = PulseService(test_session).get_dev_drilldown(alondra.id)
+    ws = dd.wip_summary
+
+    assert ws.wip == 2, f"WIP esperado=2 (In Progress + In Code), obtenido={ws.wip}"
+    assert ws.review == 4, f"Review esperado=4, obtenido={ws.review}"
+    assert ws.qa == 0
+    assert ws.semaphore == "green", f"WIP=2 vs límite DB=5 → verde, obtenido={ws.semaphore}"
+    assert dd.total == 6, "total incluye todas las operativas (In Progress + In Code + In Review)"
+
+
+def test_wip_in_code_counts_as_wip(test_session: Session):
+    """'In Code' (estado activo de DB en Jira) cuenta como WIP igual que In Progress."""
+    _seed_wip_limits(test_session)
+    _project(test_session)
+    dev = _player(test_session, 101, "DB", "Dev InCode")
+    _subtask(test_session, "YAP-IC1", "In Progress", "DB", dev.id)
+    _subtask(test_session, "YAP-IC2", "In Code", "DB", dev.id)
+    _subtask(test_session, "YAP-IC3", "In Review", "DB", dev.id)
+
+    dd = PulseService(test_session).get_dev_drilldown(dev.id)
+    ws = dd.wip_summary
+    assert ws.wip == 2, f"In Progress + In Code = 2, obtenido={ws.wip}"
+    assert ws.review == 1
+
+
+def test_wip_daniel_backlog_no_cuenta(test_session: Session):
+    """CASO PM: dev con subtasks en Backlog → Backlog NO es WIP."""
+    _seed_wip_limits(test_session)
+    _project(test_session)
+    daniel = _player(test_session, 102, "BE", "Daniel BE")
+    for i in range(10):
+        _subtask(test_session, f"YAP-DB{i}", "Backlog", "BE", daniel.id)
+    _subtask(test_session, "YAP-DB10", "Ready for QA", "BE", daniel.id)
+
+    dd = PulseService(test_session).get_dev_drilldown(daniel.id)
+    ws = dd.wip_summary
+    assert ws.wip == 0, f"Backlog no es WIP, obtenido={ws.wip}"
+    assert ws.qa == 1
+    assert dd.total == 1, "Backlog excluido del total operativo"
+
+
+def test_semaphore_green_below_limit(test_session: Session):
+    _seed_wip_limits(test_session)
+    _project(test_session)
+    dev = _player(test_session, 103, "BE", "DevGreen")  # límite BE=3
+    _subtask(test_session, "YAP-G1", "In Progress", "BE", dev.id)
+    _subtask(test_session, "YAP-G2", "In Progress", "BE", dev.id)
+
+    dd = PulseService(test_session).get_dev_drilldown(dev.id)
+    assert dd.wip_summary.wip == 2
+    assert dd.wip_summary.wip_limit == 3
+    assert dd.wip_summary.semaphore == "green"
+
+
+def test_semaphore_yellow_at_limit(test_session: Session):
+    _seed_wip_limits(test_session)
+    _project(test_session)
+    dev = _player(test_session, 104, "BE", "DevYellow")  # límite BE=3
+    for i in range(3):
+        _subtask(test_session, f"YAP-Y{i}", "In Progress", "BE", dev.id)
+
+    dd = PulseService(test_session).get_dev_drilldown(dev.id)
+    assert dd.wip_summary.wip == 3
+    assert dd.wip_summary.semaphore == "yellow"
+
+
+def test_semaphore_red_over_limit(test_session: Session):
+    _seed_wip_limits(test_session)
+    _project(test_session)
+    dev = _player(test_session, 105, "BE", "DevRed")  # límite BE=3
+    for i in range(4):
+        _subtask(test_session, f"YAP-R{i}", "In Progress", "BE", dev.id)
+
+    dd = PulseService(test_session).get_dev_drilldown(dev.id)
+    assert dd.wip_summary.wip == 4
+    assert dd.wip_summary.semaphore == "red"
+
+
+def test_in_review_no_dispara_semaphore(test_session: Session):
+    """Dev con muchos In Review y WIP=0 → verde. In Review no es WIP."""
+    _seed_wip_limits(test_session)
+    _project(test_session)
+    dev = _player(test_session, 106, "BE", "DevReview")
+    for i in range(10):
+        _subtask(test_session, f"YAP-REV{i}", "In Review", "BE", dev.id)
+
+    dd = PulseService(test_session).get_dev_drilldown(dev.id)
+    assert dd.wip_summary.wip == 0
+    assert dd.wip_summary.review == 10
+    assert dd.wip_summary.semaphore == "green"
+
+
+def test_area_card_wip_metrics(test_session: Session):
+    """AreaCard expone wip_count, wip_limit y semáforo del área."""
+    _seed_wip_limits(test_session)
+    _project(test_session)
+    dev1 = _player(test_session, 107, "FE", "FeDev1")  # límite FE=3
+    dev2 = _player(test_session, 108, "FE", "FeDev2")
+    # dev1: 2 WIP (verde), dev2: 1 WIP (verde) → área verde
+    for i in range(2):
+        _subtask(test_session, f"YAP-FE1{i}", "In Progress", "FE", dev1.id)
+    _subtask(test_session, "YAP-FE20", "In Progress", "FE", dev2.id)
+    _subtask(test_session, "YAP-FE21", "In Review", "FE", dev2.id)
+
+    snap = PulseService(test_session).get_pulse()
+    fe_card = next(c for c in snap.area_cards if c.area == "FE")
+
+    assert fe_card.wip_count == 3
+    assert fe_card.wip_limit == 3
+    # Semáforo es per-dev: dev1=2 < límite=3 (verde), dev2=1 < límite=3 (verde) → área verde
+    assert fe_card.semaphore == "green"
+    assert fe_card.n_devs_over_limit == 0
+
+
+def test_area_card_semaphore_red_if_dev_over_limit(test_session: Session):
+    """Si algún dev del área supera su límite, el área sale roja."""
+    _seed_wip_limits(test_session)
+    _project(test_session)
+    dev = _player(test_session, 109, "BE", "BEover")  # límite BE=3
+    for i in range(4):
+        _subtask(test_session, f"YAP-BEOV{i}", "In Progress", "BE", dev.id)
+
+    snap = PulseService(test_session).get_pulse()
+    be_card = next(c for c in snap.area_cards if c.area == "BE")
+    assert be_card.semaphore == "red"
+    assert be_card.n_devs_over_limit == 1

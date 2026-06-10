@@ -108,6 +108,8 @@ class SyncOrchestrator:
                         "Task",
                         "Bug",
                         "Coordination",
+                        # Tipo custom DB — hijo directo de Epic (WP-20 ajuste: sin parent Story)
+                        "Database",
                     ]:
                         self._sync_subtask(issue_data, stats)
                     else:
@@ -188,9 +190,14 @@ class SyncOrchestrator:
         time_metrics = extract_time_metrics(issue)
         quality_metrics = extract_quality_metrics(issue)
 
-        # Inferir área del assignee
+        # Inferir área del assignee; si no hay, inferir del issue_type (evita default ciego a BE)
         assignee_id = self._get_player_id(fields.get("assignee"))
-        area = self._infer_area(assignee_id) if assignee_id else "BE"  # Default BE
+        issue_type_str = fields.get("issuetype", {}).get("name", "Sub-task")
+        area = (
+            self._infer_area(assignee_id)
+            if assignee_id
+            else self._area_from_issue_type(issue_type_str)
+        )
 
         # done_at viene de time_metrics (resolutiondate o última transición a Done)
         done_at: datetime | None = time_metrics.get("done_at")  # type: ignore[assignment]
@@ -213,9 +220,15 @@ class SyncOrchestrator:
         if isinstance(priority_field, dict):
             priority = priority_field.get("name")
 
+        # parent_story_key solo si el padre es una Story (no Epic).
+        # "Database" issues son hijos directos de Epics → parent_story_key = None.
+        _parent = fields.get("parent") or {}
+        _parent_type = (_parent.get("fields") or {}).get("issuetype", {}).get("name", "")
+        _parent_story_key: str | None = _parent.get("key") if _parent_type not in ("Epic",) else None
+
         subtask_data = {
             "jira_key": key,
-            "parent_story_key": (fields.get("parent") or {}).get("key"),
+            "parent_story_key": _parent_story_key,
             "project_code": match_project(key, self.session),
             "issue_type": fields.get("issuetype", {}).get("name", "Sub-task"),
             "area": area,
@@ -293,6 +306,19 @@ class SyncOrchestrator:
         """Inferir área del player."""
         player = self.session.get(Player, player_id)
         return player.area if player else "BE"
+
+    @staticmethod
+    def _area_from_issue_type(issue_type: str) -> str:
+        """Área canónica para tareas sin assignee, inferida del issue type.
+        Evita el default ciego a 'BE' que contaminaba los conteos de área."""
+        t = issue_type.lower()
+        if "frontend" in t or "ui" in t:
+            return "FE"
+        if "design" in t:
+            return "DESIGN"
+        if "database" in t or "db" in t:
+            return "DB"
+        return "BE"
 
     def _get_cycle_id(self, done_at: datetime | None) -> int | None:
         """

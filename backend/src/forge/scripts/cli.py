@@ -808,6 +808,71 @@ def sprint_generate(
 
 
 @app.command()
+def seed_epic_kinds() -> None:
+    """Aplicar clasificación de contenedores desde seed/epic_kinds.yaml (idempotente)."""
+    import json
+
+    from forge.db.models.audit_log import AuditLog
+    from forge.db.models.epic import Epic
+
+    path = SEED_DIR / "epic_kinds.yaml"
+    if not path.exists():
+        console.print(f"[red]No se encontró {path}[/red]")
+        raise typer.Exit(1)
+
+    data = yaml.safe_load(path.read_text()) or {}
+    entries = data.get("epics", [])
+
+    session = SessionLocal()
+    now = datetime.utcnow()
+    changed = skipped = not_found = 0
+
+    try:
+        for entry in entries:
+            jira_key = entry["jira_key"]
+            new_kind = entry["epic_kind"]
+            epic = session.get(Epic, jira_key)
+            if epic is None:
+                console.print(f"  [yellow]⚠[/yellow] {jira_key} no existe en DB — omitido")
+                not_found += 1
+                continue
+            if epic.epic_kind == new_kind:
+                skipped += 1
+                continue
+            old_kind = epic.epic_kind
+            epic.epic_kind = new_kind
+            session.add(
+                AuditLog(
+                    event_type="epic_kind_set",
+                    entity_type="epic",
+                    entity_id=jira_key,
+                    actor_player_id=None,
+                    changes=json.dumps(
+                        {"epic_kind_before": old_kind, "epic_kind_after": new_kind}
+                    ),
+                    extra_metadata=json.dumps(
+                        {"source": "seed_epic_kinds", "note": entry.get("note", "")}
+                    ),
+                    timestamp=now,
+                )
+            )
+            changed += 1
+            console.print(f"  [green]✓[/green] {jira_key} → {new_kind}")
+
+        session.commit()
+        console.print(
+            f"\n[bold green]✅ epic_kinds — {changed} actualizados, {skipped} sin cambio, "
+            f"{not_found} no encontrados[/bold green]"
+        )
+    except Exception as e:
+        session.rollback()
+        console.print(f"[bold red]❌ Error: {e}[/bold red]")
+        raise typer.Exit(1)
+    finally:
+        session.close()
+
+
+@app.command()
 def shell():
     """Abrir IPython con sesión de DB cargada."""
     try:

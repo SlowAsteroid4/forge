@@ -49,15 +49,27 @@ from forge.schemas.dashboard import (
 # ──────────────────────────────────────────────
 
 _DONE = "Done"
-_TERMINAL = frozenset({"Done", "Cancelled"})
+_TERMINAL = frozenset({"Done", "Cancelled", "Backlog"})
 _BLOCKED = frozenset({"Blocked", "Waiting"})
-_LEADERBOARD_AREAS = ["BE", "FE", "DESIGN", "DB", "QA"]
+_LEADERBOARD_AREAS = ["BE", "FE", "DESIGN", "DB", "BUG", "QA"]
+
+# Áreas excluidas de la tabla de equipo: no generan CP directamente.
+# PM coordina, QA valida — su WIP no refleja entrega de implementación.
+_PLAYER_TABLE_EXCLUDED_AREAS = frozenset({"PM", "QA"})
+
+# WIP canónico (alineado con pulse_service): solo trabajo activo de implementación.
+# "In Code" es el estado activo del área DB en Jira (distinto de "In Progress").
+_WIP_STATES = frozenset({"In Progress", "In Code"})
+
+# Tipos de issue que NO cuentan como WIP (coordinación pura, nunca cierran).
+_EXCLUDED_ISSUE_TYPES = frozenset({"Coordination"})
 
 _WIP_THRESHOLDS: dict[str, int] = {
     "BE": 3,
     "FE": 3,
     "DESIGN": 4,
     "DB": 5,
+    "BUG": 3,
     "QA": 5,
 }
 _DEFAULT_WIP = 5
@@ -301,12 +313,13 @@ class DashboardService:
     def _area_live_devs(
         self, area: str, project_code: str | None, story_keys: frozenset[str] | None = None
     ) -> int:
-        """Devs con WIP activo AHORA en esta área (sin filtro de ciclo)."""
+        """Devs con WIP canónico activo AHORA en esta área (In Progress + In Code)."""
         stmt = (
             select(func.count(Subtask.assignee_player_id.distinct()))
             .where(
                 Subtask.area == area,
-                Subtask.status.not_in(list(_TERMINAL)),
+                Subtask.status.in_(list(_WIP_STATES)),
+                Subtask.issue_type.not_in(list(_EXCLUDED_ISSUE_TYPES)),
                 Subtask.assignee_player_id.is_not(None),
             )
         )
@@ -319,7 +332,7 @@ class DashboardService:
     def _area_has_wip_bottleneck(
         self, area: str, project_code: str | None, story_keys: frozenset[str] | None = None
     ) -> bool:
-        """Algún dev del área excede umbral de WIP (en vivo, sin filtro de ciclo)."""
+        """Algún dev del área excede umbral de WIP canónico (In Progress + In Code)."""
         threshold = _WIP_THRESHOLDS.get(area, _DEFAULT_WIP)
         inner = (
             select(
@@ -328,7 +341,8 @@ class DashboardService:
             )
             .where(
                 Subtask.area == area,
-                Subtask.status.not_in(list(_TERMINAL)),
+                Subtask.status.in_(list(_WIP_STATES)),
+                Subtask.issue_type.not_in(list(_EXCLUDED_ISSUE_TYPES)),
                 Subtask.assignee_player_id.is_not(None),
             )
             .group_by(Subtask.assignee_player_id)
@@ -351,7 +365,13 @@ class DashboardService:
         story_keys: frozenset[str] | None = None,
     ) -> list[PlayerStatus]:
         """Retorna TODOS los devs activos con WIP en vivo + done del ciclo."""
-        players_stmt = select(Player).where(Player.is_active.is_(True))
+        players_stmt = (
+            select(Player)
+            .where(
+                Player.is_active.is_(True),
+                Player.area.not_in(list(_PLAYER_TABLE_EXCLUDED_AREAS)),
+            )
+        )
         players = self._s.scalars(players_stmt).all()
 
         result: list[PlayerStatus] = []
@@ -377,13 +397,16 @@ class DashboardService:
     def _player_wip_live(
         self, player_id: int, project_code: str | None, story_keys: frozenset[str] | None = None
     ) -> int:
-        """WIP en vivo del dev (sin filtro de ciclo)."""
+        """WIP canónico en vivo del dev: solo In Progress + In Code (sin filtro de ciclo).
+        Excluye Coordination — nunca cierran y contaminarían el conteo.
+        Alineado con pulse_service._WIP_STATES."""
         stmt = (
             select(func.count())
             .select_from(Subtask)
             .where(
                 Subtask.assignee_player_id == player_id,
-                Subtask.status.not_in(list(_TERMINAL)),
+                Subtask.status.in_(list(_WIP_STATES)),
+                Subtask.issue_type.not_in(list(_EXCLUDED_ISSUE_TYPES)),
             )
         )
         if project_code:
@@ -422,9 +445,8 @@ class DashboardService:
         project_code: str | None,
         story_keys: frozenset[str] | None = None,
     ) -> str:
-        if wip_live == 0:
-            return "inactive"
-
+        # Chequear blocked ANTES de "inactive": un dev con tareas bloqueadas pero
+        # sin WIP canónico activo sigue bloqueado (no inactivo).
         blocked_stmt = (
             select(func.count())
             .select_from(Subtask)
@@ -439,8 +461,12 @@ class DashboardService:
             blocked_stmt = blocked_stmt.where(Subtask.parent_story_key.in_(story_keys))
         blocked_count = int(self._s.scalar(blocked_stmt) or 0)
 
+        if blocked_count > 0 and wip_live == 0:
+            return "blocked"  # sin WIP activo pero con tareas bloqueadas
+        if wip_live == 0:
+            return "inactive"
         if blocked_count >= wip_live:
-            return "blocked"
+            return "blocked"  # todo el WIP activo está bloqueado
 
         threshold = _WIP_THRESHOLDS.get(area, _DEFAULT_WIP)
         if wip_live > threshold:

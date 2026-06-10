@@ -61,6 +61,7 @@ class EpicForecast:
     summary: str
     project_code: str
     status: str
+    epic_kind: str
     cp_total: float
     cp_done: float
     cp_pending: float
@@ -182,7 +183,12 @@ class ForecastCalculator:
         project_code: str | None,
         epic_status: str | None,
     ) -> list[Epic]:
-        q = select(Epic).where(Epic.status.not_in([_DONE, _CANCELLED]))
+        # Solo épicas 'normal' van al forecast de fechas de cierre.
+        # coordination/version_container nunca cierran → no tiene sentido proyectar ETA.
+        q = select(Epic).where(
+            Epic.status.not_in([_DONE, _CANCELLED]),
+            Epic.epic_kind == "normal",
+        )
         if project_code:
             q = q.where(Epic.project_code == project_code)
         if epic_status:
@@ -267,6 +273,7 @@ class ForecastCalculator:
             summary=epic.summary,
             project_code=epic.project_code or "",
             status=epic.status,
+            epic_kind=epic.epic_kind,
             cp_total=total_cp,
             cp_done=total_done,
             cp_pending=total_pending,

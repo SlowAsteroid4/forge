@@ -1,6 +1,9 @@
 // Zona de color JPDS por estado (paleta WP-07b). El backend la envía por fila.
 export type PulseZone = "neutral" | "dev" | "review" | "qa" | "blocked" | "done";
 
+// WP-20: semáforo de WIP
+export type WipSemaphore = "green" | "yellow" | "red";
+
 // CAMBIO 1: franja de contadores por estado (orden de flujo)
 export interface FlowCounter {
   key: string;
@@ -31,6 +34,10 @@ export interface AreaStatusGroup {
 export interface AreaCard {
   area: string;
   total_active: number;
+  wip_count: number;
+  wip_limit: number;
+  semaphore: WipSemaphore;
+  n_devs_over_limit: number;
   by_status: AreaStatusGroup[];
 }
 
@@ -44,12 +51,24 @@ export interface DevTask {
   dias_en_estado: number;
 }
 
+// WP-20: resumen WIP canónico por dev
+export interface DevWipSummary {
+  wip: number;      // In Progress + In Code — solo esto dispara el semáforo
+  review: number;   // In Review
+  qa: number;       // Ready for QA + In QA
+  waiting: number;  // Waiting
+  ready: number;    // Ready (for dev)
+  wip_limit: number;
+  semaphore: WipSemaphore;
+}
+
 export interface DevDrilldown {
   player_id: number;
   display_name: string;
   is_aggregate_team: boolean;
   area: string | null;
   total: number;
+  wip_summary: DevWipSummary;
   tasks: DevTask[];
 }
 

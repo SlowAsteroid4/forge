@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import type { AreaCard, AreaTask } from "@/lib/types/pulse";
+import type { AreaCard, AreaTask, WipSemaphore } from "@/lib/types/pulse";
 import { ZONE_ROW, ZONE_DOT } from "@/lib/pulse-zones";
 import { cn } from "@/lib/utils";
 
@@ -10,9 +10,24 @@ interface Props {
   onDevClick: (playerId: number, name: string) => void;
 }
 
+// WP-20: semáforo en el header de la card de área
+const SEMAPHORE_PILL: Record<WipSemaphore, string> = {
+  green: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400",
+  yellow: "bg-yellow-400/20 text-yellow-700 dark:text-yellow-400",
+  red: "bg-red-500/15 text-red-700 dark:text-red-400",
+};
+
+const SEMAPHORE_DOT: Record<WipSemaphore, string> = {
+  green: "bg-emerald-500",
+  yellow: "bg-yellow-400",
+  red: "bg-red-500",
+};
+
 /**
- * CAMBIO 2: cards por área (BE/DB/DESIGN/FE).
- * - Card = nº de tareas activas asignadas al área (sin "WIP", sin semáforo).
+ * CAMBIO 2 + WP-20: cards por área (BE/DB/DESIGN/FE).
+ * - Header muestra WIP (In Progress + In Code) con semáforo verde/amarillo/rojo.
+ *   El semáforo es per-dev individual vs límite del área. In Review/QA/Waiting/Ready
+ *   se muestran en el desglose por estado pero NO disparan color de semáforo.
  * - Click card → expande a cantidad por estado.
  * - Click cantidad-por-estado → lista código + dueño, fila coloreada por estado.
  * - Click en el dueño → drill-down del dev (onDevClick).
@@ -48,12 +63,37 @@ export function AreaCards({ cards, onDevClick }: Props) {
                 <span className="font-semibold text-sm">{card.area}</span>
                 <span className="text-muted-foreground text-xs">{isOpen ? "▾" : "▸"}</span>
               </div>
-              <p className="text-2xl font-bold tabular-nums mt-0.5">
-                {card.total_active}
-                <span className="text-xs font-normal text-muted-foreground"> activas</span>
+
+              {/* WP-20: WIP con semáforo (número grande) */}
+              <div className="flex items-end gap-2 mt-0.5">
+                <p className="text-2xl font-bold tabular-nums leading-none">
+                  <span
+                    className={cn(
+                      "inline-flex items-center gap-1 rounded px-1 py-0.5",
+                      SEMAPHORE_PILL[card.semaphore],
+                    )}
+                  >
+                    <span className={cn("h-2 w-2 rounded-full shrink-0", SEMAPHORE_DOT[card.semaphore])} />
+                    {card.wip_count}
+                  </span>
+                  <span className="text-xs font-normal text-muted-foreground ml-1">
+                    WIP / {card.wip_limit}
+                  </span>
+                </p>
+              </div>
+
+              {/* Total activas (contexto adicional) */}
+              <p className="text-[10px] text-muted-foreground mt-1">
+                {card.total_active} total activas
+                {card.n_devs_over_limit > 0 && (
+                  <span className="ml-1 text-red-600 dark:text-red-400 font-medium">
+                    · {card.n_devs_over_limit} dev{card.n_devs_over_limit > 1 ? "s" : ""} sobre límite
+                  </span>
+                )}
               </p>
+
               {unassigned > 0 && (
-                <p className="text-[10px] text-muted-foreground mt-0.5">{unassigned} sin asignar</p>
+                <p className="text-[10px] text-muted-foreground">{unassigned} sin asignar</p>
               )}
             </button>
 

@@ -89,7 +89,7 @@ export default async function CostsByAreaPage({ searchParams }: PageProps) {
   // Empty state: API reachable pero sin costos capturados
   if (data && !data.has_any_cost) {
     return (
-      <div className="flex flex-col gap-6 p-6 max-w-full">
+      <div className="flex-1 min-h-0 overflow-auto p-6 max-w-full space-y-6">
         <div>
           <h1 className="text-xl font-semibold">Costo por área</h1>
           <p className="text-sm text-muted-foreground mt-0.5">Vista ejecutiva de costos · acceso restringido</p>
@@ -118,7 +118,7 @@ export default async function CostsByAreaPage({ searchParams }: PageProps) {
     : null;
 
   return (
-    <div className="flex flex-col gap-6 p-6 max-w-full">
+    <div className="flex-1 min-h-0 overflow-auto p-6 max-w-full space-y-6">
       {/* Header */}
       <div className="flex items-start justify-between gap-4">
         <div>

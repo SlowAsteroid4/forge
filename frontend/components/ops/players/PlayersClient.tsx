@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import type { PlayerAdminItem, AreaEnum, EmploymentType } from "@/lib/types/players";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -11,7 +12,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Pencil } from "lucide-react";
+import { Eye, Pencil } from "lucide-react";
 import { PlayerEditModal } from "./PlayerEditModal";
 
 interface Props {
@@ -46,6 +47,7 @@ function formatCost(value: number | null): string {
 }
 
 export function PlayersClient({ initialPlayers, total }: Props) {
+  const router = useRouter();
   const [players, setPlayers] = useState(initialPlayers);
   const [editingPlayer, setEditingPlayer] = useState<PlayerAdminItem | null>(null);
   const [filterArea, setFilterArea] = useState<string>("all");
@@ -122,7 +124,7 @@ export function PlayersClient({ initialPlayers, total }: Props) {
               <th className="text-left px-4 py-2 font-medium">Lead</th>
               <th className="text-right px-4 py-2 font-medium">Salario/mes</th>
               <th className="text-right px-4 py-2 font-medium">Tarifa/h</th>
-              <th className="w-10 px-2 py-2" />
+              <th className="w-20 px-2 py-2" />
             </tr>
           </thead>
           <tbody className="divide-y divide-border">
@@ -171,14 +173,28 @@ export function PlayersClient({ initialPlayers, total }: Props) {
                   {formatCost(p.hourly_rate)}
                 </td>
                 <td className="px-2 py-2.5">
-                  <Button
-                    size="icon"
-                    variant="ghost"
-                    className="h-7 w-7"
-                    onClick={() => setEditingPlayer(p)}
-                  >
-                    <Pencil size={13} />
-                  </Button>
+                  <div className="flex items-center justify-end gap-0.5">
+                    {p.is_active && (
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        className="h-7 w-7"
+                        title="Ver como (Arena)"
+                        onClick={() => router.push(`/arena/login?as=${p.id}`)}
+                      >
+                        <Eye size={13} />
+                      </Button>
+                    )}
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="h-7 w-7"
+                      title="Editar"
+                      onClick={() => setEditingPlayer(p)}
+                    >
+                      <Pencil size={13} />
+                    </Button>
+                  </div>
                 </td>
               </tr>
             ))}

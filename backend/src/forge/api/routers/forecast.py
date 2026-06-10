@@ -32,6 +32,7 @@ def _to_item(ef: EpicForecast) -> EpicForecastItem:
         summary=ef.summary,
         project_code=ef.project_code,
         status=ef.status,
+        epic_kind=ef.epic_kind,
         cp_total=ef.cp_total,
         cp_done=ef.cp_done,
         cp_pending=ef.cp_pending,

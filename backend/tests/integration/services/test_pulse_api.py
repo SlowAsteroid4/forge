@@ -78,19 +78,19 @@ def _seed(session: Session) -> None:
     cl = json.dumps({"histories": []})
     session.add(Subtask(jira_key="YAP-1", summary="Task 1", status="In Progress",
                         area="BE", assignee_player_id=1, project_code="YAP",
-                        last_synced_at=now, issue_type="Sub-task", raw_changelog=cl))
+                        last_synced_at=now, issue_type="Backend Sub-task", raw_changelog=cl))
     session.add(Subtask(jira_key="YAP-2", summary="Task 2", status="In Review",
                         area="BE", assignee_player_id=1, project_code="YAP",
-                        last_synced_at=now, issue_type="Sub-task", raw_changelog=cl))
+                        last_synced_at=now, issue_type="Backend Sub-task", raw_changelog=cl))
     session.add(Subtask(jira_key="YAP-3", summary="Task 3", status="Ready",
                         area="FE", assignee_player_id=2, project_code="YAP",
-                        last_synced_at=now, issue_type="Sub-task", raw_changelog=cl))
+                        last_synced_at=now, issue_type="Frontend Sub-Task", raw_changelog=cl))
     session.add(Subtask(jira_key="YAP-4", summary="Task 4", status="Blocked",
                         area="BE", assignee_player_id=1, project_code="YAP",
-                        last_synced_at=now, issue_type="Sub-task", raw_changelog=cl))
+                        last_synced_at=now, issue_type="Backend Sub-task", raw_changelog=cl))
     session.add(Subtask(jira_key="YAP-5", summary="Task 5 Done", status="Done",
                         area="BE", assignee_player_id=1, project_code="YAP",
-                        last_synced_at=now, issue_type="Sub-task", raw_changelog=cl))
+                        last_synced_at=now, issue_type="Backend Sub-task", raw_changelog=cl))
     session.commit()
 
 

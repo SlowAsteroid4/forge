@@ -1,4 +1,4 @@
-"""Schemas Pydantic para UC-16 Pulso Operativo (rediseño WP-16)."""
+"""Schemas Pydantic para UC-16 Pulso Operativo (rediseño WP-16, WIP fix WP-20)."""
 
 from __future__ import annotations
 
@@ -52,12 +52,20 @@ class AreaStatusGroup(BaseModel):
 class AreaCard(BaseModel):
     """Card de un área: tareas activas asignadas → expand por estado → código+dueño.
 
-    Sin 'WIP', sin semáforo de límite. Cuenta estados activos (Ready→In QA, Blocked);
-    excluye Backlog y Done.
+    WP-20: agrega wip_count, wip_limit, semaphore y n_devs_over_limit.
     """
 
     area: str
     total_active: int = Field(description="Total de tareas activas en el área (excl. Backlog/Done)")
+    wip_count: int = Field(default=0, description="Tareas WIP (In Progress + In Code) en el área")
+    wip_limit: int = Field(default=0, description="Límite de WIP configurado para el área")
+    semaphore: str = Field(
+        default="green",
+        description="Color semáforo del área: green/yellow/red. Rojo si algún dev supera su límite.",
+    )
+    n_devs_over_limit: int = Field(
+        default=0, description="Devs cuyo WIP individual excede el límite del área"
+    )
     by_status: list[AreaStatusGroup] = Field(description="Grupos por estado en orden de flujo")
 
 
@@ -73,6 +81,20 @@ class DevTask(BaseModel):
     dias_en_estado: float = Field(description="Días hábiles en el estado actual")
 
 
+class DevWipSummary(BaseModel):
+    """Resumen WIP por dev (WP-20). Solo wip dispara color de semáforo."""
+
+    wip: int = Field(description="Trabajo activo: In Progress + In Code")
+    review: int = Field(description="En revisión: In Review")
+    qa: int = Field(description="En QA: Ready for QA + In QA")
+    waiting: int = Field(description="En espera: Waiting")
+    ready: int = Field(description="Listos para dev: Ready")
+    wip_limit: int = Field(description="Límite de WIP del área del dev")
+    semaphore: str = Field(
+        description="verde/amarillo/rojo. Verde: WIP < límite. Amarillo: WIP == límite. Rojo: WIP > límite."
+    )
+
+
 class DevDrilldown(BaseModel):
     player_id: int
     display_name: str
@@ -80,7 +102,8 @@ class DevDrilldown(BaseModel):
         default=False, description="True si es cuenta-grupo agregada"
     )
     area: str | None
-    total: int
+    total: int = Field(description="Total de tareas operativas del dev (excl. Backlog/Done)")
+    wip_summary: DevWipSummary = Field(description="WP-20: WIP canónico + semáforo")
     tasks: list[DevTask] = Field(description="Tareas en progreso del dev, con estatus")
 
 

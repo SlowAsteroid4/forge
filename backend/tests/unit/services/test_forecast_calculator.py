@@ -35,13 +35,19 @@ def _cycle(session: Session, name: str, status: str = "closed", offset_weeks: in
     return c
 
 
-def _epic(session: Session, key: str, status: str = "In Progress") -> Epic:
+def _epic(
+    session: Session,
+    key: str,
+    status: str = "In Progress",
+    epic_kind: str = "normal",
+) -> Epic:
     from datetime import datetime
 
     e = Epic(
         jira_key=key,
         summary=f"Epic {key}",
         status=status,
+        epic_kind=epic_kind,
         cp_total=0.0,
         last_synced_at=datetime.utcnow(),
     )
@@ -338,3 +344,77 @@ def test_epic_without_cp_no_crash(test_session: Session):
     assert ef.cp_total == 0.0
     assert ef.areas == []
     assert ef.warning is not None
+
+
+# ──────────────────────────────────────────────────────────────
+# WP-19: epic_kind — coordination y version_container excluidos
+# ──────────────────────────────────────────────────────────────
+
+def test_coordination_epic_excluded_from_compute_all(test_session: Session):
+    """compute_all solo devuelve épicas 'normal'; coordination queda fuera."""
+    _cycle(test_session, "WK19h", offset_weeks=4)
+    _cycle(test_session, "WK20h", offset_weeks=3)
+    test_session.commit()
+
+    normal_epic = _epic(test_session, "YAP-N01", epic_kind="normal")
+    coord_epic = _epic(test_session, "YAP-C01", epic_kind="coordination")
+    vc_epic = _epic(test_session, "YAP-V01", epic_kind="version_container")
+    test_session.commit()
+
+    calc = ForecastCalculator(test_session)
+    results = calc.compute_all()
+    keys = [ef.epic_key for ef in results]
+
+    assert "YAP-N01" in keys, "épica normal debe aparecer en forecast"
+    assert "YAP-C01" not in keys, "coordination NO debe aparecer en forecast"
+    assert "YAP-V01" not in keys, "version_container NO debe aparecer en forecast"
+
+
+def test_compute_one_carries_epic_kind(test_session: Session):
+    """compute_one devuelve epic_kind correcto en EpicForecast."""
+    _epic(test_session, "YAP-K01", epic_kind="normal")
+    _epic(test_session, "YAP-K02", epic_kind="version_container")
+    test_session.commit()
+
+    calc = ForecastCalculator(test_session)
+    ef_normal = calc.compute_one("YAP-K01")
+    ef_vc = calc.compute_one("YAP-K02")
+
+    assert ef_normal is not None and ef_normal.epic_kind == "normal"
+    assert ef_vc is not None and ef_vc.epic_kind == "version_container"
+
+
+def test_epic_kind_default_is_normal(test_session: Session):
+    """Epic creada sin epic_kind explícito debe tener 'normal'."""
+    from datetime import datetime as _dt
+
+    e = Epic(
+        jira_key="YAP-DEF01",
+        summary="Default kind test",
+        status="In Progress",
+        cp_total=0.0,
+        last_synced_at=_dt.utcnow(),
+    )
+    test_session.add(e)
+    test_session.flush()
+    assert e.epic_kind == "normal"
+
+
+def test_version_container_excluded_from_compute_all(test_session: Session):
+    """version_container queda fuera del forecast aunque tenga CP pendiente."""
+    c1 = _cycle(test_session, "WK19vc", offset_weeks=5)
+    c2 = _cycle(test_session, "WK20vc", offset_weeks=4)
+    c3 = _cycle(test_session, "WK21vc", offset_weeks=3)
+    c4 = _cycle(test_session, "WK22vc", offset_weeks=2)
+    test_session.commit()
+
+    vc = _epic(test_session, "YAP-VC99", epic_kind="version_container")
+    story = _story(test_session, "YAP-S99", "YAP-VC99")
+    for cid in [c1.id, c2.id, c3.id, c4.id]:
+        _subtask(test_session, f"Tvc_{cid}", "YAP-S99", "BE", "Done", 5.0, cid)
+    _subtask(test_session, "Tvc_pend", "YAP-S99", "BE", "In Progress", 20.0)
+    test_session.commit()
+
+    calc = ForecastCalculator(test_session)
+    results = calc.compute_all()
+    assert all(ef.epic_key != "YAP-VC99" for ef in results)

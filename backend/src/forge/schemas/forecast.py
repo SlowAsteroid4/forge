@@ -30,6 +30,7 @@ class EpicForecastItem(BaseModel):
     summary: str
     project_code: str
     status: str
+    epic_kind: str = "normal"
     cp_total: float
     cp_done: float
     cp_pending: float

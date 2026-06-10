@@ -38,7 +38,7 @@ export default async function ForecastPage({ searchParams }: PageProps) {
   const epicsNoCP = data?.epics.filter((e) => e.cp_total === 0) ?? [];
 
   return (
-    <div className="flex flex-col gap-6 p-6 max-w-full">
+    <div className="flex-1 min-h-0 overflow-auto p-6 max-w-full space-y-6">
       {/* Header */}
       <div className="flex items-start justify-between gap-4">
         <div>

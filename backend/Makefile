@@ -1,4 +1,4 @@
-.PHONY: dev db-init db-reset seed sync sync-full test test-unit test-cov test-jira recalc recalc-all shell lint format typecheck cycle-generate cycles-list sprint-generate
+.PHONY: dev db-init db-reset seed seed-epic-kinds sync sync-full test test-unit test-cov test-jira recalc recalc-all shell lint format typecheck cycle-generate cycles-list sprint-generate
 
 dev:
 	uv run uvicorn forge.main:app --reload --port 8000
@@ -11,6 +11,9 @@ db-reset:
 
 seed:
 	uv run forge seed
+
+seed-epic-kinds:
+	uv run forge seed-epic-kinds
 
 sync:
 	uv run forge sync

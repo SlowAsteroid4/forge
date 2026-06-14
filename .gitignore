@@ -90,3 +90,6 @@ Thumbs.db
 # Backups
 *.bak
 *.backup
+
+# Graphify (grafo de conocimiento local — se reconstruye con `graphify .`)
+graphify-out/

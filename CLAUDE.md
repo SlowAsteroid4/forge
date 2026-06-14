@@ -2,6 +2,18 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## ⚡ Knowledge graph first (ahorro de tokens)
+
+Existe un grafo de conocimiento de TODO el repo en `graphify-out/graph.json` (generado con Graphify; gitignored, reconstruir con `graphify .`). **Antes de hacer `grep` amplios o leer muchos archivos para entender el código, consúltalo** — devuelve los nodos y relaciones relevantes con su `file:line` exacto, así abres solo los 1-2 archivos que importan:
+
+```bash
+graphify query "cómo se calcula el CP de una subtask"   # búsqueda BFS, local, sin LLM
+graphify explain "sp_calculator"                          # nodo + vecinos + ubicación
+graphify path "Subtask" "sp_calculator"                   # ruta de relación entre dos nodos
+```
+
+Cobertura: el código (backend/frontend) está densamente mapeado (calls/uses/imports/inherits). El vault (`vault/`) y los specs (`backend/specs/`) están en el grafo como documentos pero poco enlazados al código — para preguntas de *negocio/decisiones* ve directo al `vault/`. Si el código cambió mucho: `graphify . --update --backend claude-cli` (con `GRAPHIFY_CLAUDE_CLI_MODEL=haiku`).
+
 ## Project Overview
 
 **Forge** is a dual-purpose team performance measurement and gamification platform for the Yapsi software development team:

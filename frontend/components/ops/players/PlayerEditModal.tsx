@@ -64,13 +64,15 @@ export function PlayerEditModal({ player, onClose, onSaved }: Props) {
     if (isActive !== player.is_active) patch.is_active = isActive;
     if (isLead !== player.is_lead) patch.is_lead = isLead;
 
-    const parsedSalary = monthlySalary === "" ? null : Number(monthlySalary);
-    const parsedHourly = hourlyRate === "" ? null : Number(hourlyRate);
-    const parsedCap = monthlyHoursCap === "" ? null : Number(monthlyHoursCap);
+    // La dinámica de costo depende del tipo de empleo: un interno cobra por
+    // mensualidad fija (monthly_salary); un externo por hora (hourly_rate ×
+    // monthly_hours_cap). Solo persistimos los campos de la dinámica activa y
+    // limpiamos (null) los de la otra para que el player nunca tenga ambas.
+    const isInternal = employmentType === "internal";
 
-    if (parsedSalary !== player.monthly_salary) patch.monthly_salary = parsedSalary;
-    if (parsedHourly !== player.hourly_rate) patch.hourly_rate = parsedHourly;
-    if (parsedCap !== player.monthly_hours_cap) patch.monthly_hours_cap = parsedCap;
+    const parsedSalary = isInternal && monthlySalary !== "" ? Number(monthlySalary) : null;
+    const parsedHourly = !isInternal && hourlyRate !== "" ? Number(hourlyRate) : null;
+    const parsedCap = !isInternal && monthlyHoursCap !== "" ? Number(monthlyHoursCap) : null;
 
     if (parsedSalary !== null && parsedSalary < 0) {
       setError("El salario no puede ser negativo.");
@@ -82,6 +84,10 @@ export function PlayerEditModal({ player, onClose, onSaved }: Props) {
       setSaving(false);
       return;
     }
+
+    if (parsedSalary !== player.monthly_salary) patch.monthly_salary = parsedSalary;
+    if (parsedHourly !== player.hourly_rate) patch.hourly_rate = parsedHourly;
+    if (parsedCap !== player.monthly_hours_cap) patch.monthly_hours_cap = parsedCap;
 
     try {
       const res = await api.patch<PlayerAdminUpdateResponse>(
@@ -181,52 +187,62 @@ export function PlayerEditModal({ player, onClose, onSaved }: Props) {
             </label>
           </div>
 
-          {/* Costos — datos sensibles */}
+          {/* Costos — datos sensibles. La dinámica depende del tipo de empleo. */}
           <div className="border-t pt-3 space-y-3">
             <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
               Costos (datos sensibles — solo vista admin)
             </p>
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label htmlFor="monthly_salary" className={labelCls}>Salario mensual (MXN)</label>
-                <input
-                  id="monthly_salary"
-                  type="number"
-                  min={0}
-                  step={100}
-                  placeholder="Ej: 25000"
-                  value={monthlySalary}
-                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => setMonthlySalary(e.target.value)}
-                  className={inputCls}
-                />
+            <p className="text-xs text-muted-foreground">
+              {employmentType === "internal"
+                ? "Interno → mensualidad fija."
+                : "Externo → costo por hora (tarifa × tope de horas/mes)."}
+            </p>
+            {employmentType === "internal" ? (
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label htmlFor="monthly_salary" className={labelCls}>Salario mensual (MXN)</label>
+                  <input
+                    id="monthly_salary"
+                    type="number"
+                    min={0}
+                    step={100}
+                    placeholder="Ej: 25000"
+                    value={monthlySalary}
+                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => setMonthlySalary(e.target.value)}
+                    className={inputCls}
+                  />
+                </div>
               </div>
-              <div>
-                <label htmlFor="hourly_rate" className={labelCls}>Tarifa/hora (MXN)</label>
-                <input
-                  id="hourly_rate"
-                  type="number"
-                  min={0}
-                  step={10}
-                  placeholder="Ej: 300"
-                  value={hourlyRate}
-                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => setHourlyRate(e.target.value)}
-                  className={inputCls}
-                />
+            ) : (
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label htmlFor="hourly_rate" className={labelCls}>Tarifa/hora (MXN)</label>
+                  <input
+                    id="hourly_rate"
+                    type="number"
+                    min={0}
+                    step={10}
+                    placeholder="Ej: 300"
+                    value={hourlyRate}
+                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => setHourlyRate(e.target.value)}
+                    className={inputCls}
+                  />
+                </div>
+                <div>
+                  <label htmlFor="monthly_hours_cap" className={labelCls}>Tope horas/mes</label>
+                  <input
+                    id="monthly_hours_cap"
+                    type="number"
+                    min={0}
+                    step={1}
+                    placeholder="Ej: 160"
+                    value={monthlyHoursCap}
+                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => setMonthlyHoursCap(e.target.value)}
+                    className={inputCls}
+                  />
+                </div>
               </div>
-              <div>
-                <label htmlFor="monthly_hours_cap" className={labelCls}>Tope horas/mes</label>
-                <input
-                  id="monthly_hours_cap"
-                  type="number"
-                  min={0}
-                  step={1}
-                  placeholder="Ej: 160"
-                  value={monthlyHoursCap}
-                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => setMonthlyHoursCap(e.target.value)}
-                  className={inputCls}
-                />
-              </div>
-            </div>
+            )}
           </div>
         </div>
 

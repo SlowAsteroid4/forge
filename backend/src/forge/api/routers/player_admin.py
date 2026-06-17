@@ -61,7 +61,11 @@ def update_player(
     session: Session = Depends(get_session),
 ) -> PlayerAdminUpdateResponse:
     """Editar campos editables de un player (PATCH parcial)."""
-    patch = {k: v for k, v in body.model_dump().items() if v is not None}
+    # exclude_unset: solo los campos que el cliente envió explícitamente.
+    # Un campo enviado como null (ej. limpiar un costo al cambiar de dinámica)
+    # SÍ debe llegar al servicio; antes se descartaban todos los None y era
+    # imposible borrar un salario/tarifa.
+    patch = body.model_dump(exclude_unset=True)
     try:
         player = player_admin_service.update_player(
             session=session,

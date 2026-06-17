@@ -5,7 +5,7 @@ from datetime import date as date_type
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import delete, select, update
 from sqlalchemy.orm import Session
 
 from forge.core.config import get_settings
@@ -14,6 +14,7 @@ from forge.db.models.audit_log import AuditLog
 from forge.db.models.cycle import Cycle
 from forge.db.models.epic import Epic
 from forge.db.models.player import Player
+from forge.db.models.sp_adjustment import SpAdjustment
 from forge.db.models.story import Story
 from forge.db.models.subtask import Subtask
 from forge.etl.jira_client import JiraClient
@@ -131,6 +132,119 @@ class SyncOrchestrator:
 
         logger.info(f"Sync completado: {stats}")
         return stats
+
+    # ──────────────────────────────────────────────────────────────
+    # Reconciliación de borrados (prune)
+    #
+    # El sync es solo upsert: nunca elimina. Cuando un issue se borra en
+    # Jira queda huérfano en la BD local. Estos métodos detectan esos
+    # registros (keys locales que ya no existen en Jira) y los eliminan.
+    # ──────────────────────────────────────────────────────────────
+
+    async def fetch_live_keys(self, project_code: str) -> set[str]:
+        """Traer TODOS los keys vivos del proyecto en Jira (sin filtro de fecha).
+
+        Se piden 0 campos extra (expand vacío) para que sea rápido: solo
+        necesitamos los keys para comparar contra la BD local.
+        """
+        jql = f"project = {project_code} ORDER BY created ASC"
+        live: set[str] = set()
+        next_page_token: str | None = None
+
+        while True:
+            response = await self.client.search_issues(
+                jql=jql,
+                next_page_token=next_page_token,
+                max_results=self.settings.sync_batch_size,
+                expand="",
+            )
+            issues = response.get("issues", [])
+            for issue in issues:
+                key = issue.get("key")
+                if key:
+                    live.add(key)
+
+            next_page_token = response.get("nextPageToken")
+            if not next_page_token or not issues:
+                break
+
+        return live
+
+    def find_stale_keys(self, live_keys: set[str], project_code: str) -> dict[str, list[str]]:
+        """Keys locales del proyecto que ya no existen en Jira.
+
+        El scope es por prefijo de key (``YAP-``) para cubrir las 3 entidades
+        de forma uniforme (Story no tiene columna project_code).
+        """
+        prefix = f"{project_code}-"
+
+        def local_stale(model: type[Epic] | type[Story] | type[Subtask]) -> list[str]:
+            rows = self.session.execute(
+                select(model.jira_key).where(model.jira_key.like(f"{prefix}%"))
+            ).scalars().all()
+            return [k for k in rows if k not in live_keys]
+
+        return {
+            "epics": local_stale(Epic),
+            "stories": local_stale(Story),
+            "subtasks": local_stale(Subtask),
+        }
+
+    def delete_stale(self, stale: dict[str, list[str]], actor_player_id: int | None = None) -> dict[str, int]:
+        """Borrar definitivamente los registros obsoletos en orden FK-seguro.
+
+        SQLite no tiene PRAGMA foreign_keys activado, así que los CASCADE/SET NULL
+        no se disparan solos: limpiamos las dependencias explícitamente.
+        """
+        subtask_keys = stale.get("subtasks", [])
+        story_keys = stale.get("stories", [])
+        epic_keys = stale.get("epics", [])
+
+        counts = {"sp_adjustments": 0, "subtasks": 0, "stories": 0, "epics": 0}
+
+        if subtask_keys:
+            # Dependientes: ajustes de SP ligados al subtask (CASCADE manual)
+            counts["sp_adjustments"] = self.session.execute(
+                delete(SpAdjustment).where(SpAdjustment.subtask_key.in_(subtask_keys))
+            ).rowcount
+            counts["subtasks"] = self.session.execute(
+                delete(Subtask).where(Subtask.jira_key.in_(subtask_keys))
+            ).rowcount
+
+        if story_keys:
+            # Desligar subtasks que aún apunten a estas stories (SET NULL manual)
+            self.session.execute(
+                update(Subtask)
+                .where(Subtask.parent_story_key.in_(story_keys))
+                .values(parent_story_key=None)
+            )
+            counts["stories"] = self.session.execute(
+                delete(Story).where(Story.jira_key.in_(story_keys))
+            ).rowcount
+
+        if epic_keys:
+            self.session.execute(
+                update(Story)
+                .where(Story.parent_epic_key.in_(epic_keys))
+                .values(parent_epic_key=None)
+            )
+            counts["epics"] = self.session.execute(
+                delete(Epic).where(Epic.jira_key.in_(epic_keys))
+            ).rowcount
+
+        if any(counts[k] for k in ("subtasks", "stories", "epics")):
+            self.session.add(
+                AuditLog(
+                    event_type="jira_prune",
+                    entity_type="sync",
+                    entity_id="prune",
+                    actor_player_id=actor_player_id,
+                    changes=json.dumps({"deleted_keys": stale, "counts": counts}),
+                    timestamp=datetime.utcnow(),
+                )
+            )
+
+        return counts
 
     def _sync_epic(self, issue: dict[str, Any], stats: dict[str, int]) -> None:
         """Sincronizar Epic."""

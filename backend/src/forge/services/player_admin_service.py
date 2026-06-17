@@ -18,6 +18,11 @@ _EDITABLE_FIELDS = frozenset(
     {"area", "employment_type", "is_active", "is_lead", "monthly_salary", "hourly_rate", "monthly_hours_cap"}
 )
 
+# Campos de costo que SÍ admiten None (borrar el valor). Necesario para
+# cambiar de dinámica: al pasar de mensualidad fija a costo por hora se debe
+# poder limpiar el salario (y viceversa). El resto de campos nunca se nulifican.
+_NULLABLE_FIELDS = frozenset({"monthly_salary", "hourly_rate", "monthly_hours_cap"})
+
 # Campos que vienen de Jira/seed y NO se deben editar desde la UI admin.
 _READONLY_FIELDS = frozenset({"jira_account_id", "display_name", "email"})
 
@@ -75,7 +80,9 @@ def update_player(
     for field, value in patch.items():
         if field not in _EDITABLE_FIELDS:
             continue
-        if value is None:
+        # None solo es válido para limpiar los campos de costo; para el resto
+        # (area, employment_type, flags) lo ignoramos para no nulificar por error.
+        if value is None and field not in _NULLABLE_FIELDS:
             continue
         old = getattr(player, field)
         if old != value:

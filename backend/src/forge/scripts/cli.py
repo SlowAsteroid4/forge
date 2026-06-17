@@ -83,6 +83,86 @@ def sync(
 
 
 @app.command()
+def prune(
+    project: str = typer.Option("YAP", help="Código de proyecto a reconciliar"),
+    apply: bool = typer.Option(
+        False,
+        "--apply",
+        help="Aplica el borrado. Sin esta bandera es dry-run (solo muestra qué se borraría).",
+    ),
+):
+    """Reconciliar borrados: elimina de la BD los issues que ya no existen en Jira.
+
+    El sync normal solo hace upsert (nunca borra). Cuando eliminas tareas en Jira
+    quedan huérfanas en el sistema. Este comando las detecta y las borra.
+
+    Dry-run (default):  forge prune
+    Aplicar el borrado: forge prune --apply
+    """
+    mode = "[bold red]APPLY[/bold red]" if apply else "[bold yellow]DRY-RUN[/bold yellow]"
+    console.print(f"🧹 Reconciliando borrados de [cyan]{project}[/cyan] — modo {mode}")
+
+    session = SessionLocal()
+    try:
+        orchestrator = SyncOrchestrator(session)
+
+        console.print("Consultando issues vivos en Jira...")
+        live_keys = asyncio.run(orchestrator.fetch_live_keys(project))
+
+        # Guarda de seguridad: si Jira no devolvió nada, NO borramos
+        # (probable error de conexión o proyecto equivocado → evita vaciar la BD).
+        if not live_keys:
+            console.print(
+                "[bold red]❌ Jira no devolvió ningún issue. Abortando para no borrar todo.[/bold red]"
+            )
+            raise typer.Exit(1)
+
+        console.print(f"  {len(live_keys)} issues vivos en Jira.")
+
+        stale = orchestrator.find_stale_keys(live_keys, project)
+        total_stale = sum(len(v) for v in stale.values())
+
+        table = Table(title="Registros obsoletos (ya no existen en Jira)")
+        table.add_column("Entidad", style="cyan")
+        table.add_column("A borrar", style="red")
+        table.add_column("Keys", style="dim")
+        for entity in ("epics", "stories", "subtasks"):
+            keys = stale[entity]
+            preview = ", ".join(keys[:8]) + (f" … (+{len(keys) - 8})" if len(keys) > 8 else "")
+            table.add_row(entity, str(len(keys)), preview or "—")
+        console.print(table)
+
+        if total_stale == 0:
+            console.print("[bold green]✅ Nada que limpiar — la BD ya está sincronizada.[/bold green]")
+            return
+
+        if not apply:
+            console.print(
+                "\n[yellow]Dry-run: no se borró nada.[/yellow] "
+                "Ejecuta [bold]forge prune --apply[/bold] para confirmar el borrado."
+            )
+            return
+
+        counts = orchestrator.delete_stale(stale)
+        session.commit()
+
+        console.print(
+            f"[bold green]✅ Borrado aplicado:[/bold green] "
+            f"{counts['subtasks']} subtasks, {counts['stories']} stories, "
+            f"{counts['epics']} epics, {counts['sp_adjustments']} ajustes de SP."
+        )
+
+    except typer.Exit:
+        raise
+    except Exception as e:
+        session.rollback()
+        console.print(f"[bold red]❌ Error: {e}[/bold red]")
+        raise typer.Exit(1)
+    finally:
+        session.close()
+
+
+@app.command()
 def test_jira():
     """Probar conexión a Jira."""
     console.print("[bold blue]🔌 Probando conexión a Jira...[/bold blue]")

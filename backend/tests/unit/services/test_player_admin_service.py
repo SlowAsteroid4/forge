@@ -154,6 +154,43 @@ def test_update_player_salary_negative_not_stored(test_session: Session, sample_
     # No lanza excepción — la validación es en el router/schema
 
 
+def test_update_player_clears_cost_field_with_none(test_session: Session, sample_player: Player):
+    """Cambiar de dinámica: enviar None debe limpiar el costo (mensualidad → hora)."""
+    sample_player.monthly_salary = 25000.0
+    test_session.commit()
+
+    player = player_admin_service.update_player(
+        session=test_session,
+        player_id=sample_player.id,
+        patch={
+            "employment_type": "external",
+            "monthly_salary": None,
+            "hourly_rate": 300.0,
+        },
+        admin_id=1,
+    )
+    test_session.commit()
+
+    assert player.monthly_salary is None
+    assert player.hourly_rate == 300.0
+    assert player.employment_type == "external"
+
+
+def test_update_player_none_does_not_null_flags(test_session: Session, sample_player: Player):
+    """None en campos no-costo (ej. is_active) se ignora, no nulifica."""
+    sample_player.is_active = True
+    test_session.commit()
+
+    player = player_admin_service.update_player(
+        session=test_session,
+        player_id=sample_player.id,
+        patch={"is_active": None, "area": None},
+        admin_id=1,
+    )
+
+    assert player.is_active is True
+
+
 def test_update_player_no_changes_no_audit_log(test_session: Session, sample_player: Player):
     """Si no hay cambios reales, no se escribe audit_log."""
     player_admin_service.update_player(

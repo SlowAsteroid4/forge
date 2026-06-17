@@ -37,7 +37,12 @@ function PlayerRow({ p }: { p: PlayerCostItem }) {
       <td className="py-2 px-3 text-center text-sm">{p.done_subtasks}</td>
       <td className="py-2 px-3 text-right text-sm">
         {p.cost_not_captured ? (
-          <span className="text-muted-foreground text-xs italic">Costo no capturado</span>
+          <span
+            className="text-muted-foreground text-xs italic"
+            title={p.cost_note ?? undefined}
+          >
+            {p.cost_note ?? "Costo no capturado"}
+          </span>
         ) : (
           fmt(p.cost_total, "currency")
         )}

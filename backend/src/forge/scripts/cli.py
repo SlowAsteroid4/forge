@@ -16,7 +16,7 @@ from forge.db.models.project import Project
 from forge.db.models.sprint import Sprint  # DEPRECATED: solo para compatibilidad seed
 from forge.db.session import SessionLocal
 from forge.etl.jira_client import JiraClient
-from forge.etl.sync_orchestrator import SyncOrchestrator
+from forge.etl.sync_orchestrator import PruneGuardAError, PruneGuardBError, SyncOrchestrator
 
 app = typer.Typer(help="Forge CLI - Comandos de gestión del sistema")
 console = Console()
@@ -88,20 +88,38 @@ def prune(
     apply: bool = typer.Option(
         False,
         "--apply",
-        help="Aplica el borrado. Sin esta bandera es dry-run (solo muestra qué se borraría).",
+        help="Aplica la poda (soft-delete + reversión SP). Sin esta bandera es dry-run.",
     ),
-):
-    """Reconciliar borrados: elimina de la BD los issues que ya no existen en Jira.
+    allow_large_prune: bool = typer.Option(
+        False,
+        "--allow-large-prune",
+        help="Omite la GUARDA A (umbral de volumen). Úsalo con precaución.",
+    ),
+    prune_threshold: int = typer.Option(
+        5,
+        "--prune-threshold",
+        help="Porcentaje máximo de subtasks activas que se puede podar en una corrida (default 5).",
+        min=1,
+        max=100,
+    ),
+) -> None:
+    """Reconciliar borrados: poda (soft-delete) issues que ya no existen en Jira.
 
     El sync normal solo hace upsert (nunca borra). Cuando eliminas tareas en Jira
-    quedan huérfanas en el sistema. Este comando las detecta y las borra.
+    quedan huérfanas en el sistema. Este comando las detecta y las poda:
+
+    - Subtasks: soft-delete (pruned_at) + reversión append-only de SP (NUNCA borra filas).
+    - Stories/epics: borrado físico (no tienen ledger de SP).
+    - GUARDA A: aborta si la poda excede --prune-threshold % de subtasks activas.
+    - GUARDA B: aborta si alguna subtask a podar tiene CP aprobado.
 
     Dry-run (default):  forge prune
-    Aplicar el borrado: forge prune --apply
+    Aplicar la poda:    forge prune --apply
     """
     mode = "[bold red]APPLY[/bold red]" if apply else "[bold yellow]DRY-RUN[/bold yellow]"
-    console.print(f"🧹 Reconciliando borrados de [cyan]{project}[/cyan] — modo {mode}")
+    console.print(f"Reconciliando obsoletos de [cyan]{project}[/cyan] — modo {mode}")
 
+    threshold_pct = prune_threshold / 100.0
     session = SessionLocal()
     try:
         orchestrator = SyncOrchestrator(session)
@@ -109,54 +127,132 @@ def prune(
         console.print("Consultando issues vivos en Jira...")
         live_keys = asyncio.run(orchestrator.fetch_live_keys(project))
 
-        # Guarda de seguridad: si Jira no devolvió nada, NO borramos
-        # (probable error de conexión o proyecto equivocado → evita vaciar la BD).
+        # Guarda: si Jira no devolvió nada, NO podamos (probable error de conexión)
         if not live_keys:
             console.print(
-                "[bold red]❌ Jira no devolvió ningún issue. Abortando para no borrar todo.[/bold red]"
+                "[bold red]ABORT: Jira no devolvió ningún issue. "
+                "Posible error de conexión o proyecto incorrecto.[/bold red]"
             )
             raise typer.Exit(1)
 
         console.print(f"  {len(live_keys)} issues vivos en Jira.")
 
         stale = orchestrator.find_stale_keys(live_keys, project)
+        stale_subtasks = stale.get("subtasks", [])
         total_stale = sum(len(v) for v in stale.values())
 
+        # ── Tabla de resumen ─────────────────────────────────────────────────
         table = Table(title="Registros obsoletos (ya no existen en Jira)")
         table.add_column("Entidad", style="cyan")
-        table.add_column("A borrar", style="red")
-        table.add_column("Keys", style="dim")
-        for entity in ("epics", "stories", "subtasks"):
+        table.add_column("Acción", style="yellow")
+        table.add_column("Count", style="red")
+        table.add_column("Keys (preview)", style="dim")
+        for entity in ("epics", "stories"):
             keys = stale[entity]
-            preview = ", ".join(keys[:8]) + (f" … (+{len(keys) - 8})" if len(keys) > 8 else "")
-            table.add_row(entity, str(len(keys)), preview or "—")
+            preview = ", ".join(keys[:5]) + (f" … (+{len(keys)-5})" if len(keys) > 5 else "")
+            table.add_row(entity, "borrado físico", str(len(keys)), preview or "—")
+        preview = ", ".join(stale_subtasks[:5]) + (
+            f" … (+{len(stale_subtasks)-5})" if len(stale_subtasks) > 5 else ""
+        )
+        table.add_row("subtasks", "soft-delete + reversal SP", str(len(stale_subtasks)), preview or "—")
         console.print(table)
 
+        # ── Reporte de SP revertido por jugador (dry-run enriquecido) ─────────
+        if stale_subtasks:
+            from sqlalchemy import select as sa_select
+            from forge.db.models.sp_adjustment import SpAdjustment
+            from forge.db.models.subtask import Subtask as SubtaskModel
+            from forge.db.models.player import Player as PlayerModel
+
+            sp_by_player: dict[str, float] = {}
+            for key in stale_subtasks:
+                subtask = session.get(SubtaskModel, key)
+                if subtask is None:
+                    continue
+                player_name = "sin asignee"
+                if subtask.assignee_player_id:
+                    p = session.get(PlayerModel, subtask.assignee_player_id)
+                    player_name = p.display_name if p else f"id={subtask.assignee_player_id}"
+                adjs = session.execute(
+                    sa_select(SpAdjustment).where(SpAdjustment.subtask_key == key)
+                ).scalars().all()
+                if adjs:
+                    net = sum(a.amount_sp for a in adjs)
+                    sp_by_player[player_name] = sp_by_player.get(player_name, 0.0) + net
+
+            if sp_by_player:
+                sp_table = Table(title="SP revertido por jugador (si se aplica)")
+                sp_table.add_column("Jugador", style="cyan")
+                sp_table.add_column("SP adj neto revertido", style="red")
+                for pname, total_sp in sorted(sp_by_player.items(), key=lambda x: -abs(x[1])):
+                    sp_table.add_row(pname, f"{total_sp:+.2f}")
+                console.print(sp_table)
+
+            # ── Simulación de guardas para dry-run ───────────────────────────
+            from sqlalchemy import func as sa_func
+            total_active: int = session.execute(
+                sa_select(sa_func.count()).select_from(SubtaskModel).where(
+                    SubtaskModel.pruned_at.is_(None)
+                )
+            ).scalar_one()
+
+            if not allow_large_prune and len(stale_subtasks) > threshold_pct * max(total_active, 1):
+                console.print(
+                    f"[bold red]GUARDA A se dispararía:[/bold red] "
+                    f"{len(stale_subtasks)} subtasks = "
+                    f"{len(stale_subtasks)/max(total_active,1)*100:.1f}% > umbral {prune_threshold}%. "
+                    "Usa --allow-large-prune para forzar."
+                )
+
+            from forge.db.models.subtask import Subtask as SubtaskModel2
+            approved_stale = session.execute(
+                sa_select(SubtaskModel2.jira_key).where(
+                    SubtaskModel2.jira_key.in_(stale_subtasks),
+                    SubtaskModel2.cp_approved_at.is_not(None),
+                )
+            ).scalars().all()
+            if approved_stale:
+                console.print(
+                    f"[bold red]GUARDA B se dispararía:[/bold red] "
+                    f"{len(approved_stale)} subtask(s) con CP aprobado: {list(approved_stale)}"
+                )
+
         if total_stale == 0:
-            console.print("[bold green]✅ Nada que limpiar — la BD ya está sincronizada.[/bold green]")
+            console.print("[bold green]Nada que limpiar — la BD ya está sincronizada.[/bold green]")
             return
 
         if not apply:
             console.print(
-                "\n[yellow]Dry-run: no se borró nada.[/yellow] "
-                "Ejecuta [bold]forge prune --apply[/bold] para confirmar el borrado."
+                "\n[yellow]Dry-run: no se escribio nada.[/yellow] "
+                "Ejecuta [bold]forge prune --apply[/bold] para confirmar."
             )
             return
 
-        counts = orchestrator.delete_stale(stale)
+        counts = orchestrator.prune_stale(
+            stale,
+            threshold_pct=threshold_pct,
+            allow_large_prune=allow_large_prune,
+            actor_player_id=1,
+        )
         session.commit()
 
         console.print(
-            f"[bold green]✅ Borrado aplicado:[/bold green] "
-            f"{counts['subtasks']} subtasks, {counts['stories']} stories, "
-            f"{counts['epics']} epics, {counts['sp_adjustments']} ajustes de SP."
+            f"[bold green]Poda aplicada:[/bold green] "
+            f"{counts['subtasks_pruned']} subtasks podadas (soft-delete), "
+            f"{counts['prune_reversals_inserted']} reversiones SP insertadas, "
+            f"{counts['stories']} stories eliminadas, "
+            f"{counts['epics']} epics eliminadas."
         )
 
+    except (PruneGuardAError, PruneGuardBError) as e:
+        session.rollback()
+        console.print(f"[bold red]ABORT — {e}[/bold red]")
+        raise typer.Exit(2)
     except typer.Exit:
         raise
     except Exception as e:
         session.rollback()
-        console.print(f"[bold red]❌ Error: {e}[/bold red]")
+        console.print(f"[bold red]Error: {e}[/bold red]")
         raise typer.Exit(1)
     finally:
         session.close()

@@ -21,6 +21,9 @@ _ADJUSTMENT_TYPES = (
     "mvp_reversal",
     "debuff_manual",
     "reversal",
+    # Reversal de poda: ledger-only, amount_sp = -original.amount_sp.
+    # El motor lo ignora; la exclusión real viene del filtro pruned_at IS NULL.
+    "prune_reversal",
 )
 
 # Valores válidos para appeal_resolution

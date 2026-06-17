@@ -5,7 +5,7 @@ from datetime import date as date_type
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import Session
 
 from forge.core.config import get_settings
@@ -24,6 +24,16 @@ from forge.etl.time_metrics import extract_time_metrics
 from forge.services.engine.cp_calculator import calculate_cp, needs_approval
 
 logger = get_logger(__name__)
+
+_DEFAULT_PRUNE_THRESHOLD_PCT = 0.05  # 5 %
+
+
+class PruneGuardAError(Exception):
+    """Poda abortada: supera el umbral de % de subtasks activas."""
+
+
+class PruneGuardBError(Exception):
+    """Poda abortada: subtask(s) a podar tiene CP aprobado."""
 
 
 class SyncOrchestrator:
@@ -173,46 +183,127 @@ class SyncOrchestrator:
     def find_stale_keys(self, live_keys: set[str], project_code: str) -> dict[str, list[str]]:
         """Keys locales del proyecto que ya no existen en Jira.
 
-        El scope es por prefijo de key (``YAP-``) para cubrir las 3 entidades
-        de forma uniforme (Story no tiene columna project_code).
+        Subtasks ya podadas (pruned_at IS NOT NULL) se excluyen: ya fueron
+        procesadas y re-correr el prune no debe duplicar reversiones.
         """
         prefix = f"{project_code}-"
 
-        def local_stale(model: type[Epic] | type[Story] | type[Subtask]) -> list[str]:
+        def _local(model: type[Epic] | type[Story]) -> list[str]:
             rows = self.session.execute(
                 select(model.jira_key).where(model.jira_key.like(f"{prefix}%"))
             ).scalars().all()
             return [k for k in rows if k not in live_keys]
 
+        # Subtasks: excluir las ya podadas para idempotencia
+        subtask_rows = self.session.execute(
+            select(Subtask.jira_key).where(
+                Subtask.jira_key.like(f"{prefix}%"),
+                Subtask.pruned_at.is_(None),
+            )
+        ).scalars().all()
+        stale_subtasks = [k for k in subtask_rows if k not in live_keys]
+
         return {
-            "epics": local_stale(Epic),
-            "stories": local_stale(Story),
-            "subtasks": local_stale(Subtask),
+            "epics": _local(Epic),
+            "stories": _local(Story),
+            "subtasks": stale_subtasks,
         }
 
-    def delete_stale(self, stale: dict[str, list[str]], actor_player_id: int | None = None) -> dict[str, int]:
-        """Borrar definitivamente los registros obsoletos en orden FK-seguro.
+    def prune_stale(
+        self,
+        stale: dict[str, list[str]],
+        *,
+        threshold_pct: float = _DEFAULT_PRUNE_THRESHOLD_PCT,
+        allow_large_prune: bool = False,
+        actor_player_id: int = 1,
+    ) -> dict[str, int]:
+        """Reconciliar obsoletos: soft-delete de subtasks + reversión append-only de SP.
 
-        SQLite no tiene PRAGMA foreign_keys activado, así que los CASCADE/SET NULL
-        no se disparan solos: limpiamos las dependencias explícitamente.
+        Para subtasks:
+          - GUARDA A: aborta si se excede el umbral de % de subtasks activas.
+          - GUARDA B: aborta si alguna subtask a podar tiene CP aprobado.
+          - Por cada subtask: inserta prune_reversal por cada SpAdjustment original
+            (amount_sp = -original.amount_sp, ledger-only) y marca pruned_at.
+          - Las filas originales de SpAdjustment y Subtask quedan INTACTAS.
+
+        Para stories y epics: borrado físico (no tienen sp_adjustments).
         """
         subtask_keys = stale.get("subtasks", [])
         story_keys = stale.get("stories", [])
         epic_keys = stale.get("epics", [])
 
-        counts = {"sp_adjustments": 0, "subtasks": 0, "stories": 0, "epics": 0}
+        counts: dict[str, int] = {
+            "subtasks_pruned": 0,
+            "prune_reversals_inserted": 0,
+            "stories": 0,
+            "epics": 0,
+        }
 
+        # ── GUARDAS (solo para subtasks) ─────────────────────────────────────
         if subtask_keys:
-            # Dependientes: ajustes de SP ligados al subtask (CASCADE manual)
-            counts["sp_adjustments"] = self.session.execute(
-                delete(SpAdjustment).where(SpAdjustment.subtask_key.in_(subtask_keys))
-            ).rowcount
-            counts["subtasks"] = self.session.execute(
-                delete(Subtask).where(Subtask.jira_key.in_(subtask_keys))
-            ).rowcount
+            total_active: int = self.session.execute(
+                select(func.count()).select_from(Subtask).where(Subtask.pruned_at.is_(None))
+            ).scalar_one()
 
+            # GUARDA A — umbral de volumen
+            if not allow_large_prune and len(subtask_keys) > threshold_pct * max(total_active, 1):
+                raise PruneGuardAError(
+                    f"GUARDA A: la poda afectaría {len(subtask_keys)} subtask(s) "
+                    f"({len(subtask_keys)/max(total_active,1)*100:.1f}% de {total_active} activas, "
+                    f"umbral={threshold_pct*100:.0f}%). "
+                    "Usa --allow-large-prune para forzar."
+                )
+
+            # GUARDA B — CP aprobado
+            approved_stale = self.session.execute(
+                select(Subtask.jira_key).where(
+                    Subtask.jira_key.in_(subtask_keys),
+                    Subtask.cp_approved_at.is_not(None),
+                )
+            ).scalars().all()
+            if approved_stale:
+                raise PruneGuardBError(
+                    f"GUARDA B: {len(approved_stale)} subtask(s) a podar tienen CP aprobado. "
+                    f"Revisión manual requerida: {list(approved_stale)}"
+                )
+
+            # ── Soft-delete + reversiones append-only ────────────────────────
+            now = datetime.utcnow()
+            for key in subtask_keys:
+                subtask = self.session.get(Subtask, key)
+                if subtask is None:
+                    continue
+
+                # Por cada SpAdjustment existente, insertar reversión ledger
+                originals = self.session.execute(
+                    select(SpAdjustment).where(SpAdjustment.subtask_key == key)
+                ).scalars().all()
+
+                for orig in originals:
+                    reversal = SpAdjustment(
+                        subtask_key=key,
+                        adjustment_type="prune_reversal",
+                        catalog_code=f"PRUNE:{orig.id}",
+                        amount_sp=round(-orig.amount_sp, 2),  # signo opuesto (vault: append-only)
+                        reason=(
+                            f"prune: subtask eliminada/fusionada en Jira "
+                            f"(revierte adj #{orig.id}, tipo={orig.adjustment_type})"
+                        ),
+                        applied_by=actor_player_id,
+                        applied_at=now,
+                        cycle_id=orig.cycle_id,
+                        is_appealed=False,
+                    )
+                    self.session.add(reversal)
+                    counts["prune_reversals_inserted"] += 1
+
+                # Soft-delete: marcar como podada (NO borrar la fila)
+                subtask.pruned_at = now
+                subtask.prune_reason = "jira_prune: issue eliminado o fusionado en Jira"
+                counts["subtasks_pruned"] += 1
+
+        # ── Stories y epics: borrado físico (sin sp_adjustments asociados) ──
         if story_keys:
-            # Desligar subtasks que aún apunten a estas stories (SET NULL manual)
             self.session.execute(
                 update(Subtask)
                 .where(Subtask.parent_story_key.in_(story_keys))
@@ -232,14 +323,14 @@ class SyncOrchestrator:
                 delete(Epic).where(Epic.jira_key.in_(epic_keys))
             ).rowcount
 
-        if any(counts[k] for k in ("subtasks", "stories", "epics")):
+        if any(counts[k] for k in ("subtasks_pruned", "stories", "epics")):
             self.session.add(
                 AuditLog(
                     event_type="jira_prune",
                     entity_type="sync",
                     entity_id="prune",
                     actor_player_id=actor_player_id,
-                    changes=json.dumps({"deleted_keys": stale, "counts": counts}),
+                    changes=json.dumps({"pruned_keys": stale, "counts": counts}),
                     timestamp=datetime.utcnow(),
                 )
             )

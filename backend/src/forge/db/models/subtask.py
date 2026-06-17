@@ -108,3 +108,9 @@ class Subtask(Base):
     # Auditoría
     last_synced_at: Mapped[datetime] = mapped_column(nullable=False, default=datetime.utcnow)
     raw_changelog: Mapped[str | None] = mapped_column(Text, comment="JSON del changelog completo")
+
+    # Soft-delete de poda (Forge-only — el sync/ETL NUNCA escribe estos campos, ADR-008)
+    pruned_at: Mapped[datetime | None] = mapped_column(
+        nullable=True, comment="Timestamp de poda; NULL = subtask activa"
+    )
+    prune_reason: Mapped[str | None] = mapped_column(Text, nullable=True)

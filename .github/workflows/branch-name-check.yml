@@ -1,0 +1,26 @@
+name: Validar nombre de rama
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  check-branch-name:
+    name: Verificar convención de nombre
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Verificar nombre de rama
+        run: |
+          BRANCH="${{ github.head_ref }}"
+          PATTERN="^(feature|fix|hotfix|chore|docs|refactor|test)/[a-z0-9][a-z0-9-]*$"
+
+          if [[ "$BRANCH" =~ $PATTERN ]]; then
+            echo "Nombre de rama válido: $BRANCH"
+          else
+            echo "ERROR: El nombre '$BRANCH' no sigue la convención."
+            echo "Usa: feature/, fix/, hotfix/, chore/, docs/, refactor/, test/"
+            echo "seguido de kebab-case en minúsculas."
+            echo "Ejemplo: feature/login-con-google"
+            exit 1
+          fi

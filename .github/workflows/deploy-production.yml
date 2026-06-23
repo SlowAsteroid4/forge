@@ -1,0 +1,40 @@
+name: Deploy a producción
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    name: Deploy producción
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Install dependencies
+        working-directory: backend
+        run: uv sync
+
+      # Reemplaza este paso con el comando real de deploy (Railway, Render, Fly.io, etc.)
+      - name: Deploy
+        run: echo "Agrega aquí el comando de deploy a producción"
+        env:
+          DEPLOY_TOKEN: ${{ secrets.PRODUCTION_DEPLOY_TOKEN }}
+
+      - name: Crear tag de versión
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          VERSION=$(date +'%Y.%m.%d')-$(git rev-parse --short HEAD)
+          git tag "v$VERSION"
+          git push origin "v$VERSION"

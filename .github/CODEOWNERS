@@ -1,0 +1,15 @@
+# Dueños globales — revisan todo lo que no tenga regla específica
+* @SlowAsteroid4
+
+# Infraestructura y CI/CD
+/.github/ @SlowAsteroid4
+/infra/ @SlowAsteroid4
+
+# Backend
+/backend/src/forge/api/ @SlowAsteroid4
+/backend/src/forge/services/ @SlowAsteroid4
+/backend/src/forge/etl/ @SlowAsteroid4
+
+# Frontend
+/frontend/src/components/ @SlowAsteroid4
+/frontend/src/app/ @SlowAsteroid4

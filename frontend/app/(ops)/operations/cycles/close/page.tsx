@@ -9,6 +9,8 @@ import type {
 import type { DashboardResponse } from "@/lib/types/dashboard";
 import { Badge } from "@/components/ui/badge";
 import { CycleCloseClient } from "@/components/ops/cycles/cycle-close-client";
+import { CycleBlockingErrors } from "@/components/ops/cycles/cycle-blocking-errors";
+import { CycleTopPlayers } from "@/components/ops/cycles/cycle-top-players";
 
 async function getActiveCycleId(): Promise<number | null> {
   const data = await api
@@ -74,22 +76,12 @@ export default async function CycleClosePage() {
           </div>
         </div>
 
-        {/* ── Blocking errors ──────────────────────────────────────────── */}
-        {summary.blocking_errors.length > 0 && (
-          <div className="rounded-md border border-destructive/50 bg-destructive/5 p-4 space-y-1">
-            <p className="text-xs font-semibold text-destructive uppercase tracking-wide">
-              Errores bloqueantes
-            </p>
-            <ul className="space-y-1">
-              {summary.blocking_errors.map((err, i) => (
-                <li key={i} className="text-sm text-destructive flex gap-2">
-                  <span>•</span>
-                  <span>{err}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
+        {/* ── Blocking errors (claves + recalc, WP-23) ─────────────────── */}
+        <CycleBlockingErrors
+          cycleId={cycleId}
+          errors={summary.blocking_errors}
+          jiraBaseUrl={summary.jira_base_url}
+        />
 
         {/* ── Warnings ─────────────────────────────────────────────────── */}
         {summary.warnings.length > 0 && (
@@ -130,44 +122,13 @@ export default async function CycleClosePage() {
             <h2 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground mb-3">
               Top players del ciclo
             </h2>
-            <div className="rounded-md border border-border overflow-hidden">
-              <table className="w-full text-sm">
-                <thead className="bg-muted/30">
-                  <tr>
-                    <th className="px-4 py-2 text-left font-medium text-muted-foreground">
-                      #
-                    </th>
-                    <th className="px-4 py-2 text-left font-medium text-muted-foreground">
-                      Player
-                    </th>
-                    <th className="px-4 py-2 text-left font-medium text-muted-foreground">
-                      Área
-                    </th>
-                    <th className="px-4 py-2 text-right font-medium text-muted-foreground">
-                      SP
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-border">
-                  {summary.top_players.map((p, i) => (
-                    <tr key={p.player_id}>
-                      <td className="px-4 py-2 text-muted-foreground tabular-nums">
-                        {i + 1}
-                      </td>
-                      <td className="px-4 py-2 font-medium">{p.display_name}</td>
-                      <td className="px-4 py-2">
-                        <Badge variant="outline" className="text-xs">
-                          {p.area}
-                        </Badge>
-                      </td>
-                      <td className="px-4 py-2 text-right tabular-nums font-mono text-sm">
-                        {p.sp.toFixed(1)}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <CycleTopPlayers
+              players={summary.top_players}
+              jiraBaseUrl={summary.jira_base_url}
+            />
+            <p className="text-xs text-muted-foreground mt-2">
+              Expande un player para ver los issues que aportaron su CP/SP.
+            </p>
           </section>
         )}
 

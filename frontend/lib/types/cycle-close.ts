@@ -18,11 +18,31 @@ export interface CycleKPIs {
   bugs_derived: number;
 }
 
+export interface IssueBreakdown {
+  jira_key: string;
+  title: string;
+  cp: number | null;
+  sp_final: number | null;
+}
+
+export interface AdjustmentLine {
+  label: string;
+  amount_sp: number; // ya viene firmado
+}
+
 export interface TopPlayer {
   player_id: number;
   display_name: string;
   area: string;
   sp: number;
+  por_issue: IssueBreakdown[];
+  ajustes_no_issue: AdjustmentLine[];
+}
+
+export interface BlockingError {
+  type: string;
+  message: string;
+  issue_keys: string[];
 }
 
 export interface CycleCloseSummary {
@@ -32,8 +52,16 @@ export interface CycleCloseSummary {
   kpis: CycleKPIs;
   top_players: TopPlayer[];
   can_close: boolean;
-  blocking_errors: string[];
+  blocking_errors: BlockingError[];
   warnings: string[];
+  jira_base_url: string | null;
+}
+
+export interface CycleRecalcResponse {
+  cycle_id: number;
+  recalculated: number;
+  message: string;
+  summary: CycleCloseSummary;
 }
 
 export interface CloseRequest {

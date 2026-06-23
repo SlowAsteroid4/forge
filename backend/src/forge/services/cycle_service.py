@@ -10,6 +10,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from forge.core.config import get_settings
 from forge.core.exceptions import NotFoundError, RuleViolationError
 from forge.core.time_utils import business_hours
 from forge.db.models.achievement import Achievement
@@ -21,6 +22,7 @@ from forge.db.models.player import Player
 from forge.db.models.sp_adjustment import SpAdjustment
 from forge.db.models.subtask import Subtask
 from forge.repositories.cycle import CycleRepository
+from forge.services.engine.engine_orchestrator import recalculate_subtask
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +31,32 @@ _MVP_BUFF_CODE = "B17"
 _MVP_ACH_CODE = "ACH04"
 _MVP_REASON_MIN_LEN = 20
 _EDIT_MVP_WINDOW_BIZ_HOURS = 24.0
+
+# ── Reconciliación de ajustes no-issue (WP-23) ──────────────────────────────
+# Ajustes player-level (subtask_key IS NULL) que NO están en sp_final. Su signo
+# define cómo contribuyen al SP del ciclo del player.
+_ADJ_SUBTRACT_TYPES = {"penalty", "debuff_manual", "mvp_reversal"}
+_ADJ_LABELS = {
+    "mvp_bonus": "Bono MVP",
+    "mvp_reversal": "Reversión MVP",
+    "bonus": "Bono",
+    "reversal": "Reversión",
+    "penalty": "Penalización",
+    "debuff_manual": "Penalización",
+}
+
+
+def _signed_adjustment(adj_type: str, amount: float) -> float:
+    """Contribución firmada de un ajuste al SP del player (negativa si penaliza)."""
+    return -amount if adj_type in _ADJ_SUBTRACT_TYPES else amount
+
+
+def _adjustment_label(adj_type: str, catalog_code: str | None) -> str:
+    """Etiqueta legible de una línea de ajuste no-issue (p.ej. 'Penalización D07')."""
+    base = _ADJ_LABELS.get(adj_type, adj_type)
+    if adj_type in ("penalty", "debuff_manual") and catalog_code and catalog_code != "CUSTOM":
+        return f"{base} {catalog_code}"
+    return base
 
 
 class CycleService:
@@ -144,9 +172,11 @@ class CycleService:
         """
         cycle = self._get_cycle(cycle_id)
 
-        # KPIs del ciclo
+        # KPIs del ciclo — se trae jira_key + summary para el drill-down (WP-23)
         done_rows = self._session.execute(
             select(
+                Subtask.jira_key,
+                Subtask.summary,
                 Subtask.assignee_player_id,
                 Subtask.cp,
                 Subtask.sp_final,
@@ -159,13 +189,52 @@ class CycleService:
         subtasks_done = len(done_rows)
         bugs_derived = sum(r.qa_attempts or 0 for r in done_rows)  # proxy: QA re-attempts
 
-        # Top 5 por SP (área → sum SP)
-        player_sp: dict[int, float] = {}
+        # ── Drill-down por player: issues + ajustes no-issue (WP-23) ──────────
+        # Issues Done por player (cada uno aporta su sp_final, que ya absorbe
+        # penalties/bonos ligados a subtask).
+        issues_by_player: dict[int, list[dict[str, Any]]] = {}
         for r in done_rows:
-            if r.assignee_player_id:
-                player_sp[r.assignee_player_id] = player_sp.get(r.assignee_player_id, 0.0) + (
-                    r.sp_final or 0.0
-                )
+            if r.assignee_player_id is None:
+                continue
+            issues_by_player.setdefault(r.assignee_player_id, []).append(
+                {
+                    "jira_key": r.jira_key,
+                    "title": r.summary,
+                    "cp": r.cp,
+                    "sp_final": r.sp_final,
+                }
+            )
+
+        # Ajustes player-level del ciclo (subtask_key IS NULL): NO están en sp_final.
+        adj_rows = self._session.execute(
+            select(
+                SpAdjustment.player_id,
+                SpAdjustment.adjustment_type,
+                SpAdjustment.catalog_code,
+                SpAdjustment.amount_sp,
+            ).where(
+                SpAdjustment.cycle_id == cycle_id,
+                SpAdjustment.subtask_key.is_(None),
+                SpAdjustment.player_id.isnot(None),
+            )
+        ).fetchall()
+
+        adjustments_by_player: dict[int, list[dict[str, Any]]] = {}
+        for pid, atype, code, amount in adj_rows:
+            adjustments_by_player.setdefault(pid, []).append(
+                {
+                    "label": _adjustment_label(atype, code),
+                    "amount_sp": round(_signed_adjustment(atype, amount or 0.0), 2),
+                }
+            )
+
+        # SP total del ciclo por player = Σ sp_final(issues) + Σ ajustes firmados.
+        # La fila DEBE cuadrar con su desglose (reconciliación obligatoria WP-23).
+        player_sp: dict[int, float] = {}
+        for pid in set(issues_by_player) | set(adjustments_by_player):
+            issue_sp = sum(i["sp_final"] or 0.0 for i in issues_by_player.get(pid, []))
+            adj_sp = sum(a["amount_sp"] for a in adjustments_by_player.get(pid, []))
+            player_sp[pid] = round(issue_sp + adj_sp, 2)
 
         top_players = []
         for pid, sp in sorted(player_sp.items(), key=lambda x: x[1], reverse=True)[:5]:
@@ -175,21 +244,25 @@ class CycleService:
                     "player_id": pid,
                     "display_name": p.display_name if p else f"Player {pid}",
                     "area": p.area if p else "?",
-                    "sp": round(sp, 2),
+                    "sp": sp,
+                    "por_issue": issues_by_player.get(pid, []),
+                    "ajustes_no_issue": adjustments_by_player.get(pid, []),
                 }
             )
 
-        # Validaciones bloqueantes
-        done_no_sp = [
-            r.assignee_player_id
-            for r in done_rows
-            if r.sp_final is None
-        ]
-        blocking_errors: list[str] = []
-        if done_no_sp:
+        # Validaciones bloqueantes — estructuradas con claves de issue (WP-23)
+        done_no_sp_keys = [r.jira_key for r in done_rows if r.sp_final is None]
+        blocking_errors: list[dict[str, Any]] = []
+        if done_no_sp_keys:
             blocking_errors.append(
-                f"{len(done_no_sp)} subtasks Done sin sp_final calculado. "
-                "Ejecuta 'make recalc' antes de cerrar."
+                {
+                    "type": "done_without_sp_final",
+                    "message": (
+                        f"{len(done_no_sp_keys)} subtasks Done sin sp_final calculado. "
+                        "Recalcula el SP del ciclo antes de cerrar."
+                    ),
+                    "issue_keys": done_no_sp_keys,
+                }
             )
 
         # Validaciones warning
@@ -224,6 +297,65 @@ class CycleService:
             "can_close": len(blocking_errors) == 0,
             "blocking_errors": blocking_errors,
             "warnings": warnings,
+            "jira_base_url": (get_settings().jira_instance_url or "").rstrip("/") or None,
+        }
+
+    # ── Recalc contextual del cierre (WP-23) ─────────────────────────────
+
+    def recalc_cycle_sp(
+        self, cycle_id: int, system_player_id: int
+    ) -> dict[str, Any]:
+        """
+        Recalcula sp_final de las subtasks Done del ciclo sin sp_final, vía el motor.
+
+        Frontera dura:
+          - Acotado al ciclo (NO --all-cycles) y solo a las Done con sp_final IS NULL.
+          - Invoca recalculate_subtask (la función atómica del motor que envuelve
+            'make recalc'); NO usa subprocess/shell.
+          - Escribe sp_final (y sus componentes derivados); NO modifica el ledger
+            sp_adjustments salvo lo que el propio motor materialice de forma
+            idempotente, ni cp/complexity_size (inmutables).
+          - Idempotente: re-correr no selecciona nada (sp_final ya no es NULL).
+          - Re-ejecuta la validación bloqueante y devuelve el estado resultante.
+
+        Returns:
+            dict con cycle_id, recalculated (n), message y summary (re-validado).
+        """
+        self._get_cycle(cycle_id)  # valida existencia
+
+        keys = [
+            row[0]
+            for row in self._session.execute(
+                select(Subtask.jira_key).where(
+                    Subtask.cycle_id == cycle_id,
+                    Subtask.status == "Done",
+                    Subtask.sp_final.is_(None),
+                )
+            )
+        ]
+
+        for key in keys:
+            recalculate_subtask(self._session, key, system_player_id, force=False)
+
+        self._audit(
+            "cycle_recalc",
+            "cycle",
+            str(cycle_id),
+            system_player_id,
+            {"recalculated": len(keys), "issue_keys": keys},
+        )
+        self._session.flush()
+
+        summary = self.get_close_summary(cycle_id)
+        return {
+            "cycle_id": cycle_id,
+            "recalculated": len(keys),
+            "message": (
+                f"Recalculadas {len(keys)} subtasks Done sin sp_final."
+                if keys
+                else "No había subtasks Done sin sp_final; nada que recalcular."
+            ),
+            "summary": summary,
         }
 
     # ── Cierre de ciclo ───────────────────────────────────────────────────

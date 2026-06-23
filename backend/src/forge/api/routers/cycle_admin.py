@@ -12,6 +12,7 @@ from forge.schemas.cycle_close import (
     CycleCloseRequest,
     CycleCloseResponse,
     CycleCloseSummary,
+    CycleRecalcResponse,
     MvpEditRequest,
     MvpHistoryItem,
 )
@@ -63,6 +64,28 @@ def get_close_summary(
         return CycleCloseSummary(**summary)
     except NotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
+
+
+@router.post("/cycles/{cycle_id}/recalc", response_model=CycleRecalcResponse)
+def recalc_cycle(
+    cycle_id: int,
+    admin_id: int = Query(default=_DEFAULT_ADMIN_ID),
+    svc: CycleService = Depends(_service),
+) -> CycleRecalcResponse:
+    """Recalcula sp_final de las Done sin calcular del ciclo y re-evalúa el bloqueo."""
+    try:
+        result = svc.recalc_cycle_sp(cycle_id, system_player_id=admin_id)
+        svc._session.commit()
+        return CycleRecalcResponse(
+            cycle_id=result["cycle_id"],
+            recalculated=result["recalculated"],
+            message=result["message"],
+            summary=CycleCloseSummary(**result["summary"]),
+        )
+    except NotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except RuleViolationError as e:
+        raise HTTPException(status_code=422, detail=str(e))
 
 
 @router.post("/cycles/{cycle_id}/close", response_model=CycleCloseResponse)

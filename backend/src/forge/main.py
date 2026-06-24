@@ -1,3 +1,4 @@
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -22,7 +23,7 @@ from forge.core.logging import setup_logging
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Lifecycle events de la app."""
     # Startup
     setup_logging()
@@ -65,7 +66,7 @@ app.include_router(arena_auth.router, prefix=settings.api_v1_prefix)
 
 
 @app.get("/")
-def root():
+def root() -> dict[str, str]:
     """Health check."""
     return {
         "app": settings.app_name,
@@ -75,7 +76,7 @@ def root():
 
 
 @app.get("/health")
-def health():
+def health() -> dict[str, object]:
     """Health check detallado."""
     return {
         "status": "healthy",

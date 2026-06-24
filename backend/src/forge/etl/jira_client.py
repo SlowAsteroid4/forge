@@ -119,7 +119,7 @@ class JiraClient:
 
                 logger.info(f"JQL search: {len(data.get('issues', []))} resultados")
 
-                return data
+                return data  # type: ignore[no-any-return]
 
             except httpx.HTTPStatusError as e:
                 error_text = e.response.text
@@ -154,7 +154,7 @@ class JiraClient:
                     params={"expand": expand},
                 )
                 response.raise_for_status()
-                return response.json()
+                return response.json()  # type: ignore[no-any-return]
             except httpx.HTTPStatusError as e:
                 raise JiraAPIError(
                     status_code=e.response.status_code,
@@ -179,7 +179,7 @@ class JiraClient:
                     headers=self.headers,
                 )
                 response.raise_for_status()
-                return response.json()
+                return response.json()  # type: ignore[no-any-return]
             except httpx.HTTPStatusError as e:
                 raise JiraAPIError(
                     status_code=e.response.status_code,

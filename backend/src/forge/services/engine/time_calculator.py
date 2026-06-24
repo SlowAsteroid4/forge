@@ -72,7 +72,7 @@ def recompute_time_metrics(subtask: Subtask) -> TimeMetricsDict:
     histories: list[dict[str, Any]] = changelog_payload.get("histories", [])
 
     # Usar created_at del modelo como referencia base
-    created_at: datetime | None = _to_naive(subtask.created_at)  # type: ignore[attr-defined]
+    created_at: datetime | None = _to_naive(subtask.created_at)
     if created_at is None:
         return _empty()
 
@@ -198,11 +198,11 @@ def _sum_status_hours(
     o al llegar al cutoff (done_at).
     """
     periods = _collect_periods(histories, target_statuses, cutoff)
-    return sum(
-        business_hours(start, end)
-        for start, end in periods
-        if start and end and end > start
-    )
+    total = 0.0
+    for start, end in periods:
+        if start and end and end > start:
+            total += business_hours(start, end)
+    return total
 
 
 def _collect_periods(

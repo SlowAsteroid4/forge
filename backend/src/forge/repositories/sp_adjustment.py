@@ -12,11 +12,11 @@ class SpAdjustmentRepository(BaseRepository[SpAdjustment, int]):
     def __init__(self, session: Session) -> None:
         super().__init__(session, SpAdjustment)
 
-    def update(self, entity: SpAdjustment) -> SpAdjustment:  # type: ignore[override]
+    def update(self, entity: SpAdjustment) -> SpAdjustment:
         """SpAdjustment es append-only — no se puede modificar."""
         raise AppendOnlyViolationError("sp_adjustments", entity.id)
 
-    def delete(self, entity: SpAdjustment) -> None:  # type: ignore[override]
+    def delete(self, entity: SpAdjustment) -> None:
         """SpAdjustment es append-only — no se puede eliminar."""
         raise AppendOnlyViolationError("sp_adjustments", entity.id)
 

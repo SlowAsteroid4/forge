@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -230,7 +231,7 @@ def _get_active_engine_version(session: Session) -> EngineVersion | None:
     return session.scalars(stmt).first()
 
 
-def _apply_time_metrics(subtask: Subtask, metrics: dict) -> None:
+def _apply_time_metrics(subtask: Subtask, metrics: dict[str, Any]) -> None:
     """Escribir métricas de tiempo calculadas en el modelo Subtask."""
     # done_at solo se actualiza si aún no está definido (evita sobrescribir
     # valores correctos en casos donde la API de Jira lo reporta explícitamente)

@@ -3,11 +3,13 @@
 import asyncio
 from datetime import date, datetime
 from pathlib import Path
+from typing import Any
 
 import typer
 import yaml
 from rich.console import Console
 from rich.table import Table
+from sqlalchemy.orm import Session
 
 from forge.core.config import get_settings
 from forge.db.models.cycle import Cycle
@@ -37,7 +39,7 @@ def sync(
             "Lento (puede tardar minutos); no reemplaza el sync diario incremental."
         ),
     ),
-):
+) -> None:
     """Sincronizar con Jira (UC-01).
 
     Uso normal (incremental, rápido):  make sync
@@ -260,7 +262,7 @@ def prune(
 
 
 @app.command()
-def test_jira():
+def test_jira() -> None:
     """Probar conexión a Jira."""
     console.print("[bold blue]🔌 Probando conexión a Jira...[/bold blue]")
 
@@ -279,7 +281,7 @@ def test_jira():
 
 
 @app.command()
-def seed():
+def seed() -> None:
     """Cargar datos seed desde archivos YAML (players, sprints, proyectos)."""
     console.print("[bold blue]🌱 Cargando datos seed...[/bold blue]")
     console.print(f"  Directorio: {SEED_DIR}")
@@ -311,7 +313,7 @@ def seed():
         session.close()
 
 
-def _seed_projects(session, now: datetime, totals: dict) -> None:
+def _seed_projects(session: Session, now: datetime, totals: dict[str, Any]) -> None:
     """Carga projects.yaml."""
     path = SEED_DIR / "projects.yaml"
     if not path.exists():
@@ -336,7 +338,7 @@ def _seed_projects(session, now: datetime, totals: dict) -> None:
     console.print(f"  [green]✓[/green] projects.yaml    — {created} creados, {updated} actualizados")
 
 
-def _seed_players(session, now: datetime, totals: dict) -> None:
+def _seed_players(session: Session, now: datetime, totals: dict[str, Any]) -> None:
     """Carga players_yapsi.yaml. Hace upsert por jira_account_id."""
     path = SEED_DIR / "players_yapsi.yaml"
     if not path.exists():
@@ -378,7 +380,7 @@ def _seed_players(session, now: datetime, totals: dict) -> None:
     console.print(f"  [green]✓[/green] players_yapsi.yaml — {created} creados, {updated} actualizados")
 
 
-def _seed_sprints(session, now: datetime, totals: dict) -> None:
+def _seed_sprints(session: Session, now: datetime, totals: dict[str, Any]) -> None:
     """Carga sprints.yaml. Hace upsert por name (único)."""
     path = SEED_DIR / "sprints.yaml"
     if not path.exists():
@@ -416,7 +418,7 @@ def _seed_sprints(session, now: datetime, totals: dict) -> None:
     console.print(f"  [green]✓[/green] sprints.yaml      — {created} creados, {updated} actualizados")
 
 
-def _seed_engine_versions(session, now: datetime, totals: dict) -> None:
+def _seed_engine_versions(session: Session, now: datetime, totals: dict[str, Any]) -> None:
     """Carga engine_versions.yaml. Upsert por version_tag."""
     from sqlalchemy import select
 
@@ -462,7 +464,7 @@ def _seed_engine_versions(session, now: datetime, totals: dict) -> None:
     )
 
 
-def _seed_buffs(session, now: datetime, totals: dict) -> None:
+def _seed_buffs(session: Session, now: datetime, totals: dict[str, Any]) -> None:
     """Carga buffs.yaml. Upsert por code (PK)."""
     from forge.db.models.buff import Buff
 
@@ -493,7 +495,7 @@ def _seed_buffs(session, now: datetime, totals: dict) -> None:
     console.print(f"  [green]✓[/green] buffs.yaml         — {created} creados, {updated} actualizados")
 
 
-def _seed_achievements(session, now: datetime, totals: dict) -> None:
+def _seed_achievements(session: Session, now: datetime, totals: dict[str, Any]) -> None:
     """Carga achievements.yaml. Upsert por code (PK)."""
     from forge.db.models.achievement import Achievement
 
@@ -526,7 +528,7 @@ def _seed_achievements(session, now: datetime, totals: dict) -> None:
     )
 
 
-def _seed_debuffs(session, now: datetime, totals: dict) -> None:
+def _seed_debuffs(session: Session, now: datetime, totals: dict[str, Any]) -> None:
     """Carga debuffs.yaml. Upsert por code (PK)."""
     from forge.db.models.debuff import Debuff
 
@@ -573,7 +575,7 @@ def recalc(
     system_player: str = typer.Option(
         "PM", help="Área del player que actúa como sistema para auto-debuffs"
     ),
-):
+) -> None:
     """Recalcular SP de las subtasks (CP×multiplicadores + debuffs).
 
     Ciclo activo (default): make recalc
@@ -686,7 +688,7 @@ def engine_demo(
     sample_size: int = typer.Option(10, help="Cuántas subtasks de ejemplo asignar"),
     cycle_id: int = typer.Option(None, help="Ciclo a samplear (default: activo)"),
     dry_run: bool = typer.Option(False, help="No persiste cambios, solo simula"),
-):
+) -> None:
     """
     Asigna tallas demo a una muestra de subtasks y recalcula. Útil para validar el engine.
 
@@ -867,7 +869,7 @@ def cycle_generate(
         "Por defecto: lunes de la semana siguiente al último ciclo registrado (o hoy).",
     ),
     dry_run: bool = typer.Option(False, help="Mostrar sin persistir"),
-):
+) -> None:
     """Generar ciclos semanales (lunes a viernes) con nombre Ciclo YYYY-WWW. Idempotente."""
     from datetime import date as _date
     from datetime import timedelta
@@ -951,7 +953,7 @@ def cycle_generate(
 @app.command()
 def cycles_list(
     limit: int = typer.Option(10, help="Número de ciclos a mostrar"),
-):
+) -> None:
     """Listar ciclos recientes."""
     from sqlalchemy import select
 
@@ -980,7 +982,7 @@ def sprint_generate(
     weeks: int = typer.Option(12, help="[DEPRECATED] Usar cycle-generate"),
     start: str = typer.Option(None),
     dry_run: bool = typer.Option(False),
-):
+) -> None:
     """[DEPRECATED] Alias de cycle-generate. Usar forge cycle-generate en su lugar."""
     console.print("[yellow]⚠ sprint-generate está deprecado. Usa forge cycle-generate[/yellow]")
     cycle_generate(weeks=weeks, start=start, dry_run=dry_run)
@@ -1052,7 +1054,7 @@ def seed_epic_kinds() -> None:
 
 
 @app.command()
-def shell():
+def shell() -> None:
     """Abrir IPython con sesión de DB cargada."""
     try:
         import IPython
@@ -1060,7 +1062,7 @@ def shell():
         from forge.db.models.subtask import Subtask
         session = SessionLocal()
         console.print("[bold green]Shell Forge — sesión DB disponible como `session`[/bold green]")
-        IPython.embed(
+        IPython.embed(  # type: ignore[no-untyped-call]
             header="Forge Shell\nVariables: session, Player, Cycle, Subtask, Project",
             user_ns={
                 "session": session,
@@ -1077,7 +1079,7 @@ def shell():
 
 
 @app.command()
-def info():
+def info() -> None:
     """Mostrar información del sistema."""
     settings = get_settings()
 

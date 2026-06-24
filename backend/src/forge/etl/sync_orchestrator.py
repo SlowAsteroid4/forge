@@ -60,7 +60,7 @@ class SyncOrchestrator:
 
         logger.info(f"Iniciando sync con JQL: {jql}")
 
-        stats = {
+        stats: dict[str, Any] = {
             "epics_created": 0,
             "epics_updated": 0,
             "stories_created": 0,
@@ -309,9 +309,8 @@ class SyncOrchestrator:
                 .where(Subtask.parent_story_key.in_(story_keys))
                 .values(parent_story_key=None)
             )
-            counts["stories"] = self.session.execute(
-                delete(Story).where(Story.jira_key.in_(story_keys))
-            ).rowcount
+            result_s = self.session.execute(delete(Story).where(Story.jira_key.in_(story_keys)))
+            counts["stories"] = getattr(result_s, "rowcount", 0)
 
         if epic_keys:
             self.session.execute(
@@ -319,9 +318,8 @@ class SyncOrchestrator:
                 .where(Story.parent_epic_key.in_(epic_keys))
                 .values(parent_epic_key=None)
             )
-            counts["epics"] = self.session.execute(
-                delete(Epic).where(Epic.jira_key.in_(epic_keys))
-            ).rowcount
+            result_e = self.session.execute(delete(Epic).where(Epic.jira_key.in_(epic_keys)))
+            counts["epics"] = getattr(result_e, "rowcount", 0)
 
         if any(counts[k] for k in ("subtasks_pruned", "stories", "epics")):
             self.session.add(
@@ -337,7 +335,7 @@ class SyncOrchestrator:
 
         return counts
 
-    def _sync_epic(self, issue: dict[str, Any], stats: dict[str, int]) -> None:
+    def _sync_epic(self, issue: dict[str, Any], stats: dict[str, Any]) -> None:
         """Sincronizar Epic."""
         key = issue["key"]
         fields = issue["fields"]
@@ -361,7 +359,7 @@ class SyncOrchestrator:
             self.session.add(Epic(**epic_data))
             stats["epics_created"] += 1
 
-    def _sync_story(self, issue: dict[str, Any], stats: dict[str, int]) -> None:
+    def _sync_story(self, issue: dict[str, Any], stats: dict[str, Any]) -> None:
         """Sincronizar Story."""
         key = issue["key"]
         fields = issue["fields"]
@@ -384,7 +382,7 @@ class SyncOrchestrator:
             self.session.add(Story(**story_data))
             stats["stories_created"] += 1
 
-    def _sync_subtask(self, issue: dict[str, Any], stats: dict[str, int]) -> None:
+    def _sync_subtask(self, issue: dict[str, Any], stats: dict[str, Any]) -> None:
         """Sincronizar Subtask."""
         key = issue["key"]
         fields = issue["fields"]

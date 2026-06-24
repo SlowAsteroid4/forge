@@ -16,7 +16,7 @@ from forge.db.models.project import Project
 from forge.db.models.sprint import Sprint  # DEPRECATED: solo para compatibilidad seed
 from forge.db.session import SessionLocal
 from forge.etl.jira_client import JiraClient
-from forge.etl.sync_orchestrator import SyncOrchestrator
+from forge.etl.sync_orchestrator import PruneGuardAError, PruneGuardBError, SyncOrchestrator
 
 app = typer.Typer(help="Forge CLI - Comandos de gestión del sistema")
 console = Console()
@@ -28,9 +28,31 @@ SEED_DIR = Path(__file__).parent.parent.parent.parent / "seed"
 @app.command()
 def sync(
     jql: str = typer.Option(None, help="Query JQL personalizada"),
+    full: bool = typer.Option(
+        False,
+        "--full",
+        help=(
+            "Backfill completo: ignora el filtro -14d y trae TODOS los issues del proyecto. "
+            "Usar para sincronizar issues viejos con talla asignada hace >14 días. "
+            "Lento (puede tardar minutos); no reemplaza el sync diario incremental."
+        ),
+    ),
 ):
-    """Sincronizar con Jira (UC-01)."""
-    console.print("[bold blue]🔄 Iniciando sincronización con Jira...[/bold blue]")
+    """Sincronizar con Jira (UC-01).
+
+    Uso normal (incremental, rápido):  make sync
+    Backfill completo (sin -14d):      make sync-full  /  forge sync --full
+    JQL personalizada:                  forge sync --jql "project = YAP AND ..."
+    """
+    if full and jql:
+        console.print("[red]❌ --full y --jql son mutuamente excluyentes. Usa uno solo.[/red]")
+        raise typer.Exit(1)
+
+    if full:
+        jql = "project = YAP ORDER BY updated DESC"
+        console.print("[bold yellow]📦 Modo backfill completo (sin filtro de fecha)[/bold yellow]")
+    else:
+        console.print("[bold blue]🔄 Iniciando sincronización con Jira...[/bold blue]")
 
     session = SessionLocal()
     try:
@@ -55,6 +77,182 @@ def sync(
 
     except Exception as e:
         console.print(f"[bold red]❌ Error: {e}[/bold red]")
+        raise typer.Exit(1)
+    finally:
+        session.close()
+
+
+@app.command()
+def prune(
+    project: str = typer.Option("YAP", help="Código de proyecto a reconciliar"),
+    apply: bool = typer.Option(
+        False,
+        "--apply",
+        help="Aplica la poda (soft-delete + reversión SP). Sin esta bandera es dry-run.",
+    ),
+    allow_large_prune: bool = typer.Option(
+        False,
+        "--allow-large-prune",
+        help="Omite la GUARDA A (umbral de volumen). Úsalo con precaución.",
+    ),
+    prune_threshold: int = typer.Option(
+        5,
+        "--prune-threshold",
+        help="Porcentaje máximo de subtasks activas que se puede podar en una corrida (default 5).",
+        min=1,
+        max=100,
+    ),
+) -> None:
+    """Reconciliar borrados: poda (soft-delete) issues que ya no existen en Jira.
+
+    El sync normal solo hace upsert (nunca borra). Cuando eliminas tareas en Jira
+    quedan huérfanas en el sistema. Este comando las detecta y las poda:
+
+    - Subtasks: soft-delete (pruned_at) + reversión append-only de SP (NUNCA borra filas).
+    - Stories/epics: borrado físico (no tienen ledger de SP).
+    - GUARDA A: aborta si la poda excede --prune-threshold % de subtasks activas.
+    - GUARDA B: aborta si alguna subtask a podar tiene CP aprobado.
+
+    Dry-run (default):  forge prune
+    Aplicar la poda:    forge prune --apply
+    """
+    mode = "[bold red]APPLY[/bold red]" if apply else "[bold yellow]DRY-RUN[/bold yellow]"
+    console.print(f"Reconciliando obsoletos de [cyan]{project}[/cyan] — modo {mode}")
+
+    threshold_pct = prune_threshold / 100.0
+    session = SessionLocal()
+    try:
+        orchestrator = SyncOrchestrator(session)
+
+        console.print("Consultando issues vivos en Jira...")
+        live_keys = asyncio.run(orchestrator.fetch_live_keys(project))
+
+        # Guarda: si Jira no devolvió nada, NO podamos (probable error de conexión)
+        if not live_keys:
+            console.print(
+                "[bold red]ABORT: Jira no devolvió ningún issue. "
+                "Posible error de conexión o proyecto incorrecto.[/bold red]"
+            )
+            raise typer.Exit(1)
+
+        console.print(f"  {len(live_keys)} issues vivos en Jira.")
+
+        stale = orchestrator.find_stale_keys(live_keys, project)
+        stale_subtasks = stale.get("subtasks", [])
+        total_stale = sum(len(v) for v in stale.values())
+
+        # ── Tabla de resumen ─────────────────────────────────────────────────
+        table = Table(title="Registros obsoletos (ya no existen en Jira)")
+        table.add_column("Entidad", style="cyan")
+        table.add_column("Acción", style="yellow")
+        table.add_column("Count", style="red")
+        table.add_column("Keys (preview)", style="dim")
+        for entity in ("epics", "stories"):
+            keys = stale[entity]
+            preview = ", ".join(keys[:5]) + (f" … (+{len(keys)-5})" if len(keys) > 5 else "")
+            table.add_row(entity, "borrado físico", str(len(keys)), preview or "—")
+        preview = ", ".join(stale_subtasks[:5]) + (
+            f" … (+{len(stale_subtasks)-5})" if len(stale_subtasks) > 5 else ""
+        )
+        table.add_row("subtasks", "soft-delete + reversal SP", str(len(stale_subtasks)), preview or "—")
+        console.print(table)
+
+        # ── Reporte de SP revertido por jugador (dry-run enriquecido) ─────────
+        if stale_subtasks:
+            from sqlalchemy import select as sa_select
+            from forge.db.models.sp_adjustment import SpAdjustment
+            from forge.db.models.subtask import Subtask as SubtaskModel
+            from forge.db.models.player import Player as PlayerModel
+
+            sp_by_player: dict[str, float] = {}
+            for key in stale_subtasks:
+                subtask = session.get(SubtaskModel, key)
+                if subtask is None:
+                    continue
+                player_name = "sin asignee"
+                if subtask.assignee_player_id:
+                    p = session.get(PlayerModel, subtask.assignee_player_id)
+                    player_name = p.display_name if p else f"id={subtask.assignee_player_id}"
+                adjs = session.execute(
+                    sa_select(SpAdjustment).where(SpAdjustment.subtask_key == key)
+                ).scalars().all()
+                if adjs:
+                    net = sum(a.amount_sp for a in adjs)
+                    sp_by_player[player_name] = sp_by_player.get(player_name, 0.0) + net
+
+            if sp_by_player:
+                sp_table = Table(title="SP revertido por jugador (si se aplica)")
+                sp_table.add_column("Jugador", style="cyan")
+                sp_table.add_column("SP adj neto revertido", style="red")
+                for pname, total_sp in sorted(sp_by_player.items(), key=lambda x: -abs(x[1])):
+                    sp_table.add_row(pname, f"{total_sp:+.2f}")
+                console.print(sp_table)
+
+            # ── Simulación de guardas para dry-run ───────────────────────────
+            from sqlalchemy import func as sa_func
+            total_active: int = session.execute(
+                sa_select(sa_func.count()).select_from(SubtaskModel).where(
+                    SubtaskModel.pruned_at.is_(None)
+                )
+            ).scalar_one()
+
+            if not allow_large_prune and len(stale_subtasks) > threshold_pct * max(total_active, 1):
+                console.print(
+                    f"[bold red]GUARDA A se dispararía:[/bold red] "
+                    f"{len(stale_subtasks)} subtasks = "
+                    f"{len(stale_subtasks)/max(total_active,1)*100:.1f}% > umbral {prune_threshold}%. "
+                    "Usa --allow-large-prune para forzar."
+                )
+
+            from forge.db.models.subtask import Subtask as SubtaskModel2
+            approved_stale = session.execute(
+                sa_select(SubtaskModel2.jira_key).where(
+                    SubtaskModel2.jira_key.in_(stale_subtasks),
+                    SubtaskModel2.cp_approved_at.is_not(None),
+                )
+            ).scalars().all()
+            if approved_stale:
+                console.print(
+                    f"[bold red]GUARDA B se dispararía:[/bold red] "
+                    f"{len(approved_stale)} subtask(s) con CP aprobado: {list(approved_stale)}"
+                )
+
+        if total_stale == 0:
+            console.print("[bold green]Nada que limpiar — la BD ya está sincronizada.[/bold green]")
+            return
+
+        if not apply:
+            console.print(
+                "\n[yellow]Dry-run: no se escribio nada.[/yellow] "
+                "Ejecuta [bold]forge prune --apply[/bold] para confirmar."
+            )
+            return
+
+        counts = orchestrator.prune_stale(
+            stale,
+            threshold_pct=threshold_pct,
+            allow_large_prune=allow_large_prune,
+            actor_player_id=1,
+        )
+        session.commit()
+
+        console.print(
+            f"[bold green]Poda aplicada:[/bold green] "
+            f"{counts['subtasks_pruned']} subtasks podadas (soft-delete), "
+            f"{counts['prune_reversals_inserted']} reversiones SP insertadas, "
+            f"{counts['stories']} stories eliminadas, "
+            f"{counts['epics']} epics eliminadas."
+        )
+
+    except (PruneGuardAError, PruneGuardBError) as e:
+        session.rollback()
+        console.print(f"[bold red]ABORT — {e}[/bold red]")
+        raise typer.Exit(2)
+    except typer.Exit:
+        raise
+    except Exception as e:
+        session.rollback()
+        console.print(f"[bold red]Error: {e}[/bold red]")
         raise typer.Exit(1)
     finally:
         session.close()
@@ -96,6 +294,7 @@ def seed():
         _seed_engine_versions(session, now, totals)
         _seed_buffs(session, now, totals)
         _seed_achievements(session, now, totals)
+        _seed_debuffs(session, now, totals)
         session.commit()
 
         console.print(
@@ -325,37 +524,70 @@ def _seed_achievements(session, now: datetime, totals: dict) -> None:
     )
 
 
+def _seed_debuffs(session, now: datetime, totals: dict) -> None:
+    """Carga debuffs.yaml. Upsert por code (PK)."""
+    from forge.db.models.debuff import Debuff
+
+    path = SEED_DIR / "debuffs.yaml"
+    if not path.exists():
+        console.print(f"  [yellow]⚠[/yellow]  debuffs.yaml no encontrado en {SEED_DIR}")
+        return
+
+    data = yaml.safe_load(path.read_text()) or {}
+    records = data.get("debuffs", [])
+    created = updated = 0
+
+    for row in records:
+        code = row.get("code")
+        if not code:
+            continue
+        existing = session.get(Debuff, code)
+        if existing:
+            for k, v in row.items():
+                setattr(existing, k, v)
+            updated += 1
+        else:
+            session.add(Debuff(**row))
+            created += 1
+
+    totals["creados"] += created
+    totals["actualizados"] += updated
+    console.print(f"  [green]✓[/green] debuffs.yaml       — {created} creados, {updated} actualizados")
+
+
 @app.command()
 def recalc(
     cycle_id: int = typer.Option(None, help="Recalcular solo este ciclo (default: activo)"),
+    all_cycles: bool = typer.Option(
+        False,
+        "--all-cycles",
+        help=(
+            "Iterar TODOS los ciclos en BD (no solo el activo). "
+            "Útil tras un backfill de tallas para materializar sp_final en ciclos cerrados. "
+            "Respeta la inmutabilidad de CP: nunca modifica cp ni complexity_size aprobados."
+        ),
+    ),
     force: bool = typer.Option(False, help="Forzar recálculo aunque engine_version no cambió"),
     system_player: str = typer.Option(
         "PM", help="Área del player que actúa como sistema para auto-debuffs"
     ),
 ):
-    """Recalcular SP de todas las subtasks de un ciclo (CP×multiplicadores + debuffs)."""
+    """Recalcular SP de las subtasks (CP×multiplicadores + debuffs).
+
+    Ciclo activo (default): make recalc
+    Todos los ciclos:        make recalc-all  /  forge recalc --all-cycles
+    Ciclo específico:        forge recalc --cycle-id 27
+    """
     from sqlalchemy import select
     from forge.services.engine import recalculate_cycle
+
+    if all_cycles and cycle_id is not None:
+        console.print("[red]❌ --all-cycles y --cycle-id son mutuamente excluyentes.[/red]")
+        raise typer.Exit(1)
 
     console.print("[bold blue]⚙️  Recalculando motor JPDS v2.0...[/bold blue]")
     session = SessionLocal()
     try:
-        # Resolver ciclo
-        if cycle_id is None:
-            stmt = select(Cycle).where(Cycle.status == "active").limit(1)
-            cycle = session.scalars(stmt).first()
-            if cycle is None:
-                console.print("[red]❌ No hay ciclo activo y no se pasó --cycle-id[/red]")
-                raise typer.Exit(1)
-            cycle_id = cycle.id
-            console.print(f"  Ciclo activo detectado: [cyan]{cycle.name}[/cyan] (id={cycle_id})")
-        else:
-            cycle = session.get(Cycle, cycle_id)
-            if cycle is None:
-                console.print(f"[red]❌ Cycle id={cycle_id} no encontrado[/red]")
-                raise typer.Exit(1)
-            console.print(f"  Ciclo: [cyan]{cycle.name}[/cyan]")
-
         # Resolver system_player (necesario para applied_by en SpAdjustments)
         stmt = select(Player).where(Player.area == system_player).limit(1)
         system_p = session.scalars(stmt).first()
@@ -366,20 +598,76 @@ def recalc(
         console.print(f"  Force: [cyan]{force}[/cyan]")
         console.print()
 
-        # Ejecutar
-        stats = recalculate_cycle(session, cycle_id, system_p.id, force=force)
-        session.commit()
+        if all_cycles:
+            # ── Modo --all-cycles: iterar todos los ciclos ────────────────────
+            console.print("[bold yellow]🔁 Modo --all-cycles: recalculando todos los ciclos[/bold yellow]")
+            cycle_ids = [
+                row[0]
+                for row in session.execute(select(Cycle.id).order_by(Cycle.id))
+            ]
+            console.print(f"  Ciclos encontrados: [cyan]{len(cycle_ids)}[/cyan]")
+            console.print()
 
-        # Mostrar resultados
-        table = Table(title=f"Recalc Engine — {cycle.name}")
-        table.add_column("Métrica", style="cyan")
-        table.add_column("Valor", style="white", justify="right")
-        table.add_row("Total subtasks", str(stats["total"]))
-        table.add_row("Procesadas", str(stats["processed"]))
-        table.add_row("Omitidas (sin cambios)", str(stats["skipped"]))
-        table.add_row("Errores", str(stats["errors"]))
-        table.add_row("SP total acumulado", f"{float(stats['sp_total']):.2f}")
-        console.print(table)
+            grand_total: dict[str, int | float] = {
+                "total": 0, "processed": 0, "skipped": 0, "errors": 0, "sp_total": 0.0
+            }
+            for cid in cycle_ids:
+                cycle_obj = session.get(Cycle, cid)
+                cycle_name = cycle_obj.name if cycle_obj else f"id={cid}"
+                partial = recalculate_cycle(session, cid, system_p.id, force=force)
+                session.commit()
+                grand_total["total"] = int(grand_total["total"]) + int(partial["total"])
+                grand_total["processed"] = int(grand_total["processed"]) + int(partial["processed"])
+                grand_total["skipped"] = int(grand_total["skipped"]) + int(partial["skipped"])
+                grand_total["errors"] = int(grand_total["errors"]) + int(partial["errors"])
+                grand_total["sp_total"] = float(grand_total["sp_total"]) + float(partial["sp_total"])
+                if int(partial["processed"]) > 0:
+                    console.print(
+                        f"  [dim]{cycle_name}[/dim]: "
+                        f"procesadas={partial['processed']} errores={partial['errors']}"
+                    )
+
+            table = Table(title="Recalc Engine — TODOS los ciclos")
+            table.add_column("Métrica", style="cyan")
+            table.add_column("Valor", style="white", justify="right")
+            table.add_row("Ciclos recorridos", str(len(cycle_ids)))
+            table.add_row("Total subtasks", str(grand_total["total"]))
+            table.add_row("Procesadas", str(grand_total["processed"]))
+            table.add_row("Omitidas (sin cambios)", str(grand_total["skipped"]))
+            table.add_row("Errores", str(grand_total["errors"]))
+            table.add_row("SP total acumulado", f"{float(grand_total['sp_total']):.2f}")
+            console.print(table)
+
+        else:
+            # ── Modo normal: un solo ciclo ────────────────────────────────────
+            if cycle_id is None:
+                stmt = select(Cycle).where(Cycle.status == "active").limit(1)
+                cycle = session.scalars(stmt).first()
+                if cycle is None:
+                    console.print("[red]❌ No hay ciclo activo y no se pasó --cycle-id[/red]")
+                    raise typer.Exit(1)
+                cycle_id = cycle.id
+                console.print(f"  Ciclo activo detectado: [cyan]{cycle.name}[/cyan] (id={cycle_id})")
+            else:
+                cycle = session.get(Cycle, cycle_id)
+                if cycle is None:
+                    console.print(f"[red]❌ Cycle id={cycle_id} no encontrado[/red]")
+                    raise typer.Exit(1)
+                console.print(f"  Ciclo: [cyan]{cycle.name}[/cyan]")
+
+            stats = recalculate_cycle(session, cycle_id, system_p.id, force=force)
+            session.commit()
+
+            table = Table(title=f"Recalc Engine — {cycle.name}")
+            table.add_column("Métrica", style="cyan")
+            table.add_column("Valor", style="white", justify="right")
+            table.add_row("Total subtasks", str(stats["total"]))
+            table.add_row("Procesadas", str(stats["processed"]))
+            table.add_row("Omitidas (sin cambios)", str(stats["skipped"]))
+            table.add_row("Errores", str(stats["errors"]))
+            table.add_row("SP total acumulado", f"{float(stats['sp_total']):.2f}")
+            console.print(table)
+
         console.print("[bold green]✅ Recalc completado[/bold green]")
 
     except Exception as e:
@@ -693,6 +981,71 @@ def sprint_generate(
     """[DEPRECATED] Alias de cycle-generate. Usar forge cycle-generate en su lugar."""
     console.print("[yellow]⚠ sprint-generate está deprecado. Usa forge cycle-generate[/yellow]")
     cycle_generate(weeks=weeks, start=start, dry_run=dry_run)
+
+
+@app.command()
+def seed_epic_kinds() -> None:
+    """Aplicar clasificación de contenedores desde seed/epic_kinds.yaml (idempotente)."""
+    import json
+
+    from forge.db.models.audit_log import AuditLog
+    from forge.db.models.epic import Epic
+
+    path = SEED_DIR / "epic_kinds.yaml"
+    if not path.exists():
+        console.print(f"[red]No se encontró {path}[/red]")
+        raise typer.Exit(1)
+
+    data = yaml.safe_load(path.read_text()) or {}
+    entries = data.get("epics", [])
+
+    session = SessionLocal()
+    now = datetime.utcnow()
+    changed = skipped = not_found = 0
+
+    try:
+        for entry in entries:
+            jira_key = entry["jira_key"]
+            new_kind = entry["epic_kind"]
+            epic = session.get(Epic, jira_key)
+            if epic is None:
+                console.print(f"  [yellow]⚠[/yellow] {jira_key} no existe en DB — omitido")
+                not_found += 1
+                continue
+            if epic.epic_kind == new_kind:
+                skipped += 1
+                continue
+            old_kind = epic.epic_kind
+            epic.epic_kind = new_kind
+            session.add(
+                AuditLog(
+                    event_type="epic_kind_set",
+                    entity_type="epic",
+                    entity_id=jira_key,
+                    actor_player_id=None,
+                    changes=json.dumps(
+                        {"epic_kind_before": old_kind, "epic_kind_after": new_kind}
+                    ),
+                    extra_metadata=json.dumps(
+                        {"source": "seed_epic_kinds", "note": entry.get("note", "")}
+                    ),
+                    timestamp=now,
+                )
+            )
+            changed += 1
+            console.print(f"  [green]✓[/green] {jira_key} → {new_kind}")
+
+        session.commit()
+        console.print(
+            f"\n[bold green]✅ epic_kinds — {changed} actualizados, {skipped} sin cambio, "
+            f"{not_found} no encontrados[/bold green]"
+        )
+    except Exception as e:
+        session.rollback()
+        console.print(f"[bold red]❌ Error: {e}[/bold red]")
+        raise typer.Exit(1)
+    finally:
+        session.close()
 
 
 @app.command()

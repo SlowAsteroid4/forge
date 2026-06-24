@@ -98,6 +98,7 @@ class JiraClient:
                 "customfield_10016",
                 "customfield_10020",
                 "customfield_10851",  # Complexity (talla: XS/S/M/L/XL/XXL)
+                "priority",
             ],
         }
 

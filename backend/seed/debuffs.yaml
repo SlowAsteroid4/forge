@@ -1,0 +1,167 @@
+# Catálogo de Debuffs JPDS v2.0
+# penalty_type: flat | percentage
+# value: cantidad absoluta (flat) o porcentaje a restar del SP (percentage)
+# is_appealable: si el player puede apelar en la weekly
+# is_auto: true = detectado automáticamente por el motor; false = aplicado manualmente por PM
+debuffs:
+  # ── Auto-detectados por el motor ─────────────────────────────────────────
+  - code: D01
+    narrative_name: "QA Primera Pasada Fallida"
+    trigger_description: "La tarea no pasó QA en el primer intento (sin reintentos adicionales)."
+    penalty_type: flat
+    value: 0.5
+    applies_to_area: null
+    icon_code: "shield-x"
+    is_appealable: true
+    is_active: true
+
+  - code: D03
+    narrative_name: "Inestabilidad QA"
+    trigger_description: "La tarea requirió 3+ intentos de QA. Penalización de 1.0 SP por cada intento extra sobre 2."
+    penalty_type: flat
+    value: 1.0
+    applies_to_area: null
+    icon_code: "flask-conical-off"
+    is_appealable: true
+    is_active: true
+
+  - code: D04
+    narrative_name: "Code Review Rechazado Múltiple"
+    trigger_description: "El código fue rechazado en 2+ revisiones. Penalización de 0.5 SP por cada rechazo extra sobre 1."
+    penalty_type: flat
+    value: 0.5
+    applies_to_area: null
+    icon_code: "git-pull-request-closed"
+    is_appealable: true
+    is_active: true
+
+  - code: D10
+    narrative_name: "Bloqueo Sin Resolución Oportuna"
+    trigger_description: "La tarea estuvo bloqueada más de 8h hábiles sin resolución."
+    penalty_type: flat
+    value: 1.0
+    applies_to_area: null
+    icon_code: "lock"
+    is_appealable: true
+    is_active: true
+
+  - code: D11
+    narrative_name: "Tarea Fantasma / Abandonada"
+    trigger_description: "La tarea lleva más de 40h hábiles sin entrega estando En Progreso."
+    penalty_type: flat
+    value: 2.0
+    applies_to_area: null
+    icon_code: "ghost"
+    is_appealable: true
+    is_active: true
+
+  - code: D13
+    narrative_name: "Cycle Overflow"
+    trigger_description: "La tarea no fue entregada cuando el ciclo cerró."
+    penalty_type: flat
+    value: 1.5
+    applies_to_area: null
+    icon_code: "clock-x"
+    is_appealable: true
+    is_active: true
+
+  # ── Aplicación manual por PM / TL ────────────────────────────────────────
+  - code: D02
+    narrative_name: "Bug Crítico en Producción"
+    trigger_description: "Se introdujo un bug crítico en producción originado en esta tarea."
+    penalty_type: flat
+    value: 3.0
+    applies_to_area: null
+    icon_code: "bug"
+    is_appealable: false
+    is_active: true
+
+  - code: D05
+    narrative_name: "Incumplimiento de SLA"
+    trigger_description: "La tarea incumplió el SLA de tiempo de respuesta acordado con el cliente."
+    penalty_type: flat
+    value: 2.0
+    applies_to_area: null
+    icon_code: "timer-off"
+    is_appealable: true
+    is_active: true
+
+  - code: D06
+    narrative_name: "Falta de Documentación"
+    trigger_description: "La tarea se entregó sin la documentación técnica requerida."
+    penalty_type: flat
+    value: 1.0
+    applies_to_area: null
+    icon_code: "file-x"
+    is_appealable: true
+    is_active: true
+
+  - code: D07
+    narrative_name: "Comunicación Tardía / Sin Actualización"
+    trigger_description: "El developer no comunicó bloqueos o avances durante más de 2 días hábiles."
+    penalty_type: flat
+    value: 1.5
+    applies_to_area: null
+    icon_code: "message-circle-off"
+    is_appealable: true
+    is_active: true
+
+  - code: D08
+    narrative_name: "Merge Sin Revisión Aprobada"
+    trigger_description: "Se hizo merge a la rama principal sin la aprobación del code reviewer."
+    penalty_type: flat
+    value: 2.0
+    applies_to_area: null
+    icon_code: "git-merge"
+    is_appealable: true
+    is_active: true
+
+  - code: D09
+    narrative_name: "No Entrega / Abandono de Tarea Asignada"
+    trigger_description: "El developer no entregó la tarea asignada y la abandonó sin traspaso."
+    penalty_type: percentage
+    value: 100.0
+    applies_to_area: null
+    icon_code: "user-x"
+    is_appealable: false
+    is_active: true
+
+  - code: D12
+    narrative_name: "Violación de Proceso de Desarrollo"
+    trigger_description: "El developer omitió pasos obligatorios del proceso (tests, convenciones, etc.)."
+    penalty_type: flat
+    value: 2.0
+    applies_to_area: null
+    icon_code: "circle-slash"
+    is_appealable: true
+    is_active: true
+
+  - code: D14
+    narrative_name: "Conducta Contra el Equipo"
+    trigger_description: "Comportamiento que afecta negativamente la dinámica o productividad del equipo."
+    penalty_type: percentage
+    value: 100.0
+    applies_to_area: null
+    icon_code: "shield-alert"
+    is_appealable: false
+    is_active: true
+
+  - code: D15
+    narrative_name: "Uso Incorrecto de Herramientas"
+    trigger_description: "Uso inadecuado de herramientas que generó retrabajo o incidentes."
+    penalty_type: flat
+    value: 1.0
+    applies_to_area: null
+    icon_code: "wrench"
+    is_appealable: true
+    is_active: true
+
+  - code: D16
+    narrative_name: "Repetición de Error Ya Corregido"
+    trigger_description: "El developer repitió un error que ya había sido señalado y corregido antes."
+    penalty_type: flat
+    value: 1.5
+    applies_to_area: null
+    icon_code: "rotate-ccw"
+    is_appealable: true
+    is_active: true

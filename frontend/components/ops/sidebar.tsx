@@ -18,9 +18,17 @@ import {
   FileText,
   ChevronDown,
   Trophy,
+  Activity,
+  Crown,
 } from "lucide-react";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api";
+
+/** Mes actual en formato YYYY-MM para enlaces de cierre mensual. */
+function currentMonthParam(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
 
 interface NavItem {
   label: string;
@@ -44,6 +52,11 @@ const navSections: NavSection[] = [
         href: "/dashboard",
         icon: <LayoutDashboard size={16} />,
       },
+      {
+        label: "Pulso",
+        href: "/pulse",
+        icon: <Activity size={16} />,
+      },
     ],
   },
   {
@@ -58,7 +71,11 @@ const navSections: NavSection[] = [
         label: "Penalizaciones",
         href: "/operations/penalties",
         icon: <AlertTriangle size={16} />,
-        disabled: true,
+      },
+      {
+        label: "Apelaciones",
+        href: "/operations/penalties/appeals",
+        icon: <AlertTriangle size={16} className="text-yellow-500" />,
       },
       {
         label: "Cerrar ciclo",
@@ -69,6 +86,16 @@ const navSections: NavSection[] = [
         label: "Historial MVP",
         href: "/operations/cycles/mvp-history",
         icon: <Trophy size={16} />,
+      },
+      {
+        label: "Cierre mensual",
+        href: `/operations/months/${currentMonthParam()}/close`,
+        icon: <Crown size={16} />,
+      },
+      {
+        label: "MVP del Mes",
+        href: "/operations/months/mvp-history",
+        icon: <Crown size={16} />,
       },
     ],
   },
@@ -83,14 +110,12 @@ const navSections: NavSection[] = [
       {
         label: "Forecast",
         href: "/analytics/forecast",
-        icon: <DollarSign size={16} />,
-        disabled: true,
+        icon: <TrendingUp size={16} />,
       },
       {
         label: "Costo por área",
         href: "/analytics/costs",
         icon: <DollarSign size={16} />,
-        disabled: true,
       },
     ],
   },
@@ -101,7 +126,6 @@ const navSections: NavSection[] = [
         label: "Players",
         href: "/admin/players",
         icon: <Users size={16} />,
-        disabled: true,
       },
       {
         label: "Integraciones",
@@ -127,11 +151,16 @@ const navSections: NavSection[] = [
 export function OpsSidebar() {
   const pathname = usePathname();
   const [cpPendingCount, setCpPendingCount] = useState(0);
+  const [appealsPendingCount, setAppealsPendingCount] = useState(0);
 
   useEffect(() => {
     fetch(`${API_BASE}/cp-approvals/pending`)
       .then((r) => r.json())
       .then((data: { total?: number }) => setCpPendingCount(data.total ?? 0))
+      .catch(() => {});
+    fetch(`${API_BASE}/penalties/appeals/pending`)
+      .then((r) => r.json())
+      .then((data: { total?: number }) => setAppealsPendingCount(data.total ?? 0))
       .catch(() => {});
   }, []);
 
@@ -184,6 +213,12 @@ export function OpsSidebar() {
                         {item.href === "/operations/cp-approvals" && cpPendingCount > 0 && (
                           <Badge variant="destructive" className="h-4 px-1 text-[10px]">
                             {cpPendingCount}
+                          </Badge>
+                        )}
+                        {/* Badge dinámico para apelaciones pendientes */}
+                        {item.href === "/operations/penalties/appeals" && appealsPendingCount > 0 && (
+                          <Badge variant="outline" className="h-4 px-1 text-[10px] border-yellow-500 text-yellow-600">
+                            {appealsPendingCount}
                           </Badge>
                         )}
                       </Link>

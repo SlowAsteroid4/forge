@@ -61,7 +61,8 @@ export function CpPerDayChart({ devs, bizDays, usesWindowFallback }: CpPerDayCha
               `${Number(value ?? 0)} CP/día`,
               `${(props.payload as { fullName?: string; area?: string })?.fullName ?? ""} (${(props.payload as { area?: string })?.area ?? ""})`,
             ]}
-            contentStyle={{ fontSize: 12 }}
+            contentStyle={{ fontSize: 12, backgroundColor: "var(--popover)", border: "1px solid var(--border)", color: "var(--popover-foreground)", borderRadius: "var(--radius-md)" }}
+            cursor={{ fill: "var(--muted)" }}
           />
           <ReferenceLine
             x={+teamAvg.toFixed(2)}

@@ -10,8 +10,8 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
-lib64/
+/lib/
+/lib64/
 parts/
 sdist/
 var/
@@ -90,3 +90,6 @@ Thumbs.db
 # Backups
 *.bak
 *.backup
+
+# Graphify (grafo de conocimiento local — se reconstruye con `graphify .`)
+graphify-out/

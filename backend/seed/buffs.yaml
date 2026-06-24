@@ -8,3 +8,12 @@ buffs:
     applies_to_area: null
     icon_code: "trophy"
     is_active: true
+  - code: B17M
+    narrative_name: "MVP Mensual"
+    multiplier_type: "flat_sp_bonus"
+    trigger_description: "Otorgado al MVP del mes (el mejor entre los MVPs semanales) en el cierre mensual."
+    value: 10.0
+    mechanic: "add"
+    applies_to_area: null
+    icon_code: "crown"
+    is_active: true

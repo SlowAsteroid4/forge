@@ -12,12 +12,12 @@ const ALERT_ICONS: Record<string, React.ReactNode> = {
 };
 
 const SEVERITY_STYLES: Record<string, string> = {
-  warning: "border-amber-200 bg-amber-50 text-amber-800",
-  error: "border-red-200 bg-red-50 text-red-800",
-  info: "border-blue-200 bg-blue-50 text-blue-800",
-  high: "border-red-200 bg-red-50 text-red-800",
-  medium: "border-amber-200 bg-amber-50 text-amber-800",
-  low: "border-blue-200 bg-blue-50 text-blue-800",
+  warning: "border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-300",
+  error:   "border-red-300 bg-red-50 text-red-800 dark:border-red-700 dark:bg-red-950/40 dark:text-red-300",
+  info:    "border-blue-300 bg-blue-50 text-blue-800 dark:border-blue-700 dark:bg-blue-950/40 dark:text-blue-300",
+  high:    "border-red-300 bg-red-50 text-red-800 dark:border-red-700 dark:bg-red-950/40 dark:text-red-300",
+  medium:  "border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-300",
+  low:     "border-blue-300 bg-blue-50 text-blue-800 dark:border-blue-700 dark:bg-blue-950/40 dark:text-blue-300",
 };
 
 interface AlertsPanelProps {

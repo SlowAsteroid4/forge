@@ -3,6 +3,7 @@
 Importar todos los modelos aquí para que Alembic autogenerate los vea.
 """
 
+from forge.db.models.area_wip_limit import AreaWipLimit
 from forge.db.models.cycle import Cycle
 from forge.db.models.forecast_snapshot import ForecastSnapshot
 from forge.db.models.mvp_monthly import MvpMonthly
@@ -26,6 +27,7 @@ from forge.db.models.story import Story
 from forge.db.models.subtask import Subtask
 
 __all__ = [
+    "AreaWipLimit",
     "Cycle",
     "ForecastSnapshot",
     "MvpMonthly",

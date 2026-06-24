@@ -12,6 +12,7 @@ from forge.schemas.cycle_close import (
     CycleCloseRequest,
     CycleCloseResponse,
     CycleCloseSummary,
+    CycleRecalcResponse,
     MvpEditRequest,
     MvpHistoryItem,
 )
@@ -33,8 +34,8 @@ def _service(session: Session = Depends(get_session)) -> CycleService:
     return CycleService(session)
 
 
-@router.get("/players", response_model=list[PlayerOption])
-def list_players(session: Session = Depends(get_session)) -> list[PlayerOption]:
+@router.get("/players-options", response_model=list[PlayerOption])
+def list_players_options(session: Session = Depends(get_session)) -> list[PlayerOption]:
     players = session.query(Player).filter(Player.is_active.is_(True)).order_by(Player.display_name).all()
     return [PlayerOption(id=p.id, display_name=p.display_name, area=p.area or "") for p in players]
 
@@ -63,6 +64,28 @@ def get_close_summary(
         return CycleCloseSummary(**summary)
     except NotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
+
+
+@router.post("/cycles/{cycle_id}/recalc", response_model=CycleRecalcResponse)
+def recalc_cycle(
+    cycle_id: int,
+    admin_id: int = Query(default=_DEFAULT_ADMIN_ID),
+    svc: CycleService = Depends(_service),
+) -> CycleRecalcResponse:
+    """Recalcula sp_final de las Done sin calcular del ciclo y re-evalúa el bloqueo."""
+    try:
+        result = svc.recalc_cycle_sp(cycle_id, system_player_id=admin_id)
+        svc._session.commit()
+        return CycleRecalcResponse(
+            cycle_id=result["cycle_id"],
+            recalculated=result["recalculated"],
+            message=result["message"],
+            summary=CycleCloseSummary(**result["summary"]),
+        )
+    except NotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except RuleViolationError as e:
+        raise HTTPException(status_code=422, detail=str(e))
 
 
 @router.post("/cycles/{cycle_id}/close", response_model=CycleCloseResponse)

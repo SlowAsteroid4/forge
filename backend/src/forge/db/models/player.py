@@ -50,6 +50,13 @@ class Player(Base):
     is_lead: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False, index=True)
 
+    # Rol de gobierno opcional (WP-15). Metadata pura: NO altera 'area' ni la
+    # participación en producción/leaderboard. Ej: Jesús = PO pero area=DESIGN.
+    role: Mapped[str | None] = mapped_column(
+        String(20),
+        comment="Rol de gobierno opcional (ej. 'PO'); independiente de 'area'",
+    )
+
     # Identidad gamificada (Arena)
     class_code: Mapped[str | None] = mapped_column(
         String(10), ForeignKey("classes.code", ondelete="RESTRICT")

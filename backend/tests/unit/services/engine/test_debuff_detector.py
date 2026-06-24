@@ -1,11 +1,20 @@
 """Tests para debuff_detector.py — D01, D03, D04, D10, D11, D13."""
 
+from datetime import date, datetime
+
 import pytest
-from datetime import datetime, date
 
 from forge.db.models.cycle import Cycle
 from forge.db.models.subtask import Subtask
 from forge.services.engine.debuff_detector import (
+    _D01_PENALTY,
+    _D03_PENALTY_PER_EXTRA,
+    _D04_PENALTY_PER_EXTRA,
+    _D10_BLOCKED_THRESHOLD_HOURS,
+    _D10_PENALTY,
+    _D11_INACTIVE_BIZ_HOURS,
+    _D11_PENALTY,
+    _D13_PENALTY,
     DetectedDebuff,
     detect_all,
     detect_d01,
@@ -14,16 +23,7 @@ from forge.services.engine.debuff_detector import (
     detect_d10,
     detect_d11,
     detect_d13,
-    _D01_PENALTY,
-    _D03_PENALTY_PER_EXTRA,
-    _D04_PENALTY_PER_EXTRA,
-    _D10_PENALTY,
-    _D11_PENALTY,
-    _D13_PENALTY,
-    _D10_BLOCKED_THRESHOLD_HOURS,
-    _D11_INACTIVE_BIZ_HOURS,
 )
-
 
 # ── Factories ──────────────────────────────────────────────────────────────
 

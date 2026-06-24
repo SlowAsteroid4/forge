@@ -160,9 +160,10 @@ def prune(
         # ── Reporte de SP revertido por jugador (dry-run enriquecido) ─────────
         if stale_subtasks:
             from sqlalchemy import select as sa_select
+
+            from forge.db.models.player import Player as PlayerModel
             from forge.db.models.sp_adjustment import SpAdjustment
             from forge.db.models.subtask import Subtask as SubtaskModel
-            from forge.db.models.player import Player as PlayerModel
 
             sp_by_player: dict[str, float] = {}
             for key in stale_subtasks:
@@ -417,8 +418,9 @@ def _seed_sprints(session, now: datetime, totals: dict) -> None:
 
 def _seed_engine_versions(session, now: datetime, totals: dict) -> None:
     """Carga engine_versions.yaml. Upsert por version_tag."""
-    from forge.db.models.engine_version import EngineVersion
     from sqlalchemy import select
+
+    from forge.db.models.engine_version import EngineVersion
 
     path = SEED_DIR / "engine_versions.yaml"
     if not path.exists():
@@ -579,6 +581,7 @@ def recalc(
     Ciclo específico:        forge recalc --cycle-id 27
     """
     from sqlalchemy import select
+
     from forge.services.engine import recalculate_cycle
 
     if all_cycles and cycle_id is not None:
@@ -697,14 +700,12 @@ def engine_demo(
 
     Si la subtask no tiene ct_biz_hours, se asigna M por defecto.
     """
+    from datetime import datetime as _dt
+
     from sqlalchemy import select
-    from datetime import date as _date, datetime as _dt
 
     from forge.services.engine import (
         calculate_cp,
-        calc_all_multipliers,
-        calculate_sp,
-        detect_all,
         recalculate_subtask,
     )
 
@@ -791,7 +792,7 @@ def engine_demo(
         session.flush()
 
         # Recalcular cada una y mostrar componentes
-        console.print(f"\n[bold]Recalculando SP para cada subtask...[/bold]")
+        console.print("\n[bold]Recalculando SP para cada subtask...[/bold]")
         sp_table = Table(title="Resultado del Engine")
         sp_table.add_column("Subtask", style="cyan")
         sp_table.add_column("Player", style="white")
@@ -868,8 +869,10 @@ def cycle_generate(
     dry_run: bool = typer.Option(False, help="Mostrar sin persistir"),
 ):
     """Generar ciclos semanales (lunes a viernes) con nombre Ciclo YYYY-WWW. Idempotente."""
-    from datetime import date as _date, timedelta
-    from sqlalchemy import select, func
+    from datetime import date as _date
+    from datetime import timedelta
+
+    from sqlalchemy import func, select
 
     console.print(f"[bold blue]📅 Generando {weeks} ciclos semanales...[/bold blue]")
     session = SessionLocal()

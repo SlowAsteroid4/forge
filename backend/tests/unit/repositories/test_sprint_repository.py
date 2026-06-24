@@ -5,7 +5,7 @@ from datetime import date, timedelta
 import pytest
 from sqlalchemy.orm import Session
 
-from forge.core.exceptions import NotFoundError, RuleViolationError
+from forge.core.exceptions import RuleViolationError
 from forge.db.models.sprint import Sprint
 from forge.repositories.sprint import SprintRepository
 

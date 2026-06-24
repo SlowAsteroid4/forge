@@ -16,7 +16,6 @@ import math
 import statistics
 from dataclasses import dataclass, field
 from datetime import date, timedelta
-from typing import Any
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session

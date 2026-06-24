@@ -1,6 +1,5 @@
 """Tests para PlayerRepository."""
 
-import pytest
 from sqlalchemy.orm import Session
 
 from forge.db.models.player import Player

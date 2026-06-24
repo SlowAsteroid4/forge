@@ -8,8 +8,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
+from forge.db.models import Cycle, Subtask
 from forge.db.session import SessionLocal
-from forge.db.models import Subtask, Cycle
 from forge.services.analytics_service import AnalyticsService
 
 JUAN_ID = 7
@@ -85,7 +85,7 @@ def main() -> None:
             print("  SUM(cp)=0 → cp_per_day=0 independientemente del scope.")
             print("  Query que lo prueba:")
             print("    SELECT COUNT(*) FROM subtasks")
-            print(f"    WHERE assignee_player_id=7 AND status='Done' AND cp > 0;")
+            print("    WHERE assignee_player_id=7 AND status='Done' AND cp > 0;")
             print(f"    → {len(done_cp_gt0)} filas")
             print("\n  Fix implicado: correr motor de CP sobre Done de Juan (make recalc")
             print("  o aprobación CP si L/XL requiere approval). NO aplicado en este WP.")

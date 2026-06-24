@@ -3,10 +3,10 @@ from logging.config import fileConfig
 from sqlalchemy import engine_from_config, pool
 
 from alembic import context
+from forge.db import models  # noqa: F401 - necesario para que SQLAlchemy vea los modelos
 
 # Importar base y modelos para autogenerate
 from forge.db.base import Base
-from forge.db import models  # noqa: F401 - necesario para que SQLAlchemy vea los modelos
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.

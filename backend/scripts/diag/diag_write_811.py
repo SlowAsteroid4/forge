@@ -13,13 +13,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
-import sqlalchemy as sa
-from sqlalchemy import create_engine, event, text
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
 from forge.etl.jira_client import JiraClient
-from forge.etl.time_metrics import extract_time_metrics
 from forge.etl.quality_metrics import extract_quality_metrics
+from forge.etl.time_metrics import extract_time_metrics
 from forge.services.engine.cp_calculator import calculate_cp, needs_approval
 
 KEY = "YAP-811"
@@ -53,7 +52,7 @@ async def main() -> None:
         text("SELECT jira_key, complexity_size, cp, cp_approved_at FROM subtasks WHERE jira_key = :k"),
         {"k": KEY},
     ).one()
-    print(f"\n[COPIA - ANTES]")
+    print("\n[COPIA - ANTES]")
     print(f"  complexity_size = {row.complexity_size!r}")
     print(f"  cp              = {row.cp!r}")
     print(f"  cp_approved_at  = {row.cp_approved_at!r}")
@@ -92,12 +91,12 @@ async def main() -> None:
         **quality_metrics,
     }
 
-    print(f"\n[Mapeo en memoria]")
+    print("\n[Mapeo en memoria]")
     print(f"  complexity_size = {subtask_data.get('complexity_size')!r}")
     print(f"  cp = {subtask_data.get('cp')!r}")
 
     # ── Upsert sobre la COPIA ─────────────────────────────────────────────────
-    print(f"\n[Write a /tmp/diag_811.db — guard inactivo (cp_approved_at IS NULL)]")
+    print("\n[Write a /tmp/diag_811.db — guard inactivo (cp_approved_at IS NULL)]")
 
     # Fetch existing from copy (same logic as session.get)
     existing_row = session.execute(
@@ -113,19 +112,19 @@ async def main() -> None:
             {k: v, "jk": KEY},
         )
 
-    print(f"  UPDATE ejecutado para todos los campos de subtask_data")
+    print("  UPDATE ejecutado para todos los campos de subtask_data")
     print(f"  complexity_size en el UPDATE = {subtask_data.get('complexity_size')!r}")
 
     # ── COMMIT EXPLÍCITO ──────────────────────────────────────────────────────
     session.commit()
-    print(f"  session.commit() — EXPLÍCITO")
+    print("  session.commit() — EXPLÍCITO")
 
     # ── Verificar en la COPIA ─────────────────────────────────────────────────
     row_after = session.execute(
         text("SELECT complexity_size, cp FROM subtasks WHERE jira_key = :k"),
         {"k": KEY},
     ).one()
-    print(f"\n[COPIA - DESPUÉS del commit]")
+    print("\n[COPIA - DESPUÉS del commit]")
     print(f"  complexity_size = {row_after.complexity_size!r}")
     print(f"  cp              = {row_after.cp!r}")
 
@@ -136,11 +135,11 @@ async def main() -> None:
         print("   CAUSA RAÍZ: el sync real pierde el commit, o el ORM no trackea el cambio.")
         print("   Patrón idéntico a WP-03b (flush sin commit).")
     else:
-        print(f"❌ Aún NULL tras commit explícito — el campo no está en el UPDATE")
+        print("❌ Aún NULL tras commit explícito — el campo no está en el UPDATE")
         print("   CAUSA RAÍZ: complexity_size no se escribe aunque esté en subtask_data")
 
     # ── Verificar que forge.db no fue tocado ─────────────────────────────────
-    print(f"\n[Verificación: forge.db real intacto]")
+    print("\n[Verificación: forge.db real intacto]")
     check_engine = create_engine(f"sqlite:///{REAL_DB}", echo=False)
     with check_engine.connect() as conn:
         real_val = conn.execute(
@@ -154,7 +153,7 @@ async def main() -> None:
 
     # Borrar copia
     COPY_DB.unlink(missing_ok=True)
-    print(f"  /tmp/diag_811.db borrado ✓")
+    print("  /tmp/diag_811.db borrado ✓")
 
 
 if __name__ == "__main__":

@@ -13,8 +13,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
-from forge.db.session import SessionLocal
 from forge.db.models import Subtask
+from forge.db.session import SessionLocal
 
 JUAN_ID = 7
 
@@ -80,7 +80,7 @@ def main() -> None:
                 print(f"  Error parseando: {e}")
 
         # Use DB columns (pre-computed bucket hours) if raw_changelog doesn't have duration
-        print(f"\n--- Usando columnas pre-computadas (dev_resp_biz_hours, qa_biz_hours, etc.) ---")
+        print("\n--- Usando columnas pre-computadas (dev_resp_biz_hours, qa_biz_hours, etc.) ---")
         bucket_totals = {
             "Dev (dev_resp)": 0.0,
             "QA (qa)": 0.0,
@@ -114,7 +114,7 @@ def main() -> None:
         print(f"\nSubtasks con al menos 1h en algún bucket: {with_hours}/{n}")
 
         # Also try raw_changelog parsing
-        print(f"\n--- Intentando parsear raw_changelog para estados Jira específicos ---")
+        print("\n--- Intentando parsear raw_changelog para estados Jira específicos ---")
         all_status_hours: dict[str, float] = defaultdict(float)
         count_with_parsed = 0
         for s in subtasks:
@@ -126,7 +126,7 @@ def main() -> None:
 
         if all_status_hours:
             print(f"Subtasks con raw_changelog parseable: {count_with_parsed}/{n}")
-            print(f"\nTop-10 estados por horas totales (Juan, todas sus Done):")
+            print("\nTop-10 estados por horas totales (Juan, todas sus Done):")
             top = sorted(all_status_hours.items(), key=lambda x: -x[1])[:10]
             for status, total in top:
                 avg = total / n

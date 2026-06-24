@@ -1178,7 +1178,7 @@ def _edit_distance_le1(a: str, b: str) -> bool:
     if abs(la - lb) > 1:
         return False
     if la == lb:  # una sola sustitución permitida
-        return sum(x != y for x, y in zip(a, b)) <= 1
+        return sum(x != y for x, y in zip(a, b, strict=False)) <= 1
     # longitudes difieren en 1: ¿una sola inserción/eliminación?
     shorter, longer = (a, b) if la < lb else (b, a)
     i = j = 0

@@ -5,7 +5,6 @@ from __future__ import annotations
 import math
 from datetime import date, timedelta
 
-import pytest
 from sqlalchemy.orm import Session
 
 from forge.db.models.cycle import Cycle
@@ -13,7 +12,6 @@ from forge.db.models.epic import Epic
 from forge.db.models.story import Story
 from forge.db.models.subtask import Subtask
 from forge.services.engine.forecast import ForecastCalculator, _add_weeks
-
 
 # ──────────────────────────────────────────────────────────────
 # Factories

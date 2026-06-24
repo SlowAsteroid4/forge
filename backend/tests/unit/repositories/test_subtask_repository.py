@@ -5,7 +5,7 @@ from datetime import datetime
 import pytest
 from sqlalchemy.orm import Session
 
-from forge.core.exceptions import CPImmutableError, NotFoundError
+from forge.core.exceptions import CPImmutableError
 from forge.db.models.subtask import Subtask
 from forge.repositories.subtask import SubtaskRepository
 

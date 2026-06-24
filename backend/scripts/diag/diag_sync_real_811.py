@@ -65,14 +65,14 @@ async def main() -> None:
     print(f"\n[DESPUÉS] complexity_size={after.complexity_size!r}  cp={after.cp!r}")
 
     # Mostrar UPDATE SQL interceptados
-    print(f"\n[SQL interceptados — UPDATE subtasks]")
+    print("\n[SQL interceptados — UPDATE subtasks]")
     if updates_seen:
         for sql in updates_seen:
             # Muestra si complexity_size aparece en el SET
             if "complexity_size" in sql:
-                print(f"  ✅ complexity_size APARECE en el UPDATE")
+                print("  ✅ complexity_size APARECE en el UPDATE")
             else:
-                print(f"  ❌ complexity_size NO aparece en el UPDATE")
+                print("  ❌ complexity_size NO aparece en el UPDATE")
             print(f"  SQL: {sql[:300]}")
     else:
         print("  (ningún UPDATE interceptado — posiblemente SQLAlchemy usó flush implícito)")
@@ -98,7 +98,7 @@ async def main() -> None:
     session2.close()
     engine.dispose()
     COPY_DB.unlink(missing_ok=True)
-    print(f"/tmp/diag_sync_811.db borrado ✓")
+    print("/tmp/diag_sync_811.db borrado ✓")
 
 
 if __name__ == "__main__":

@@ -207,9 +207,10 @@ def test_update_player_no_changes_no_audit_log(test_session: Session, sample_pla
 
 def test_edit_player_does_not_touch_subtasks(test_session: Session, sample_player: Player):
     """Editar un player NO modifica subtasks ni cp_approved_at."""
-    from forge.db.models.story import Story
-    from forge.db.models.epic import Epic
     from datetime import datetime
+
+    from forge.db.models.epic import Epic
+    from forge.db.models.story import Story
 
     epic = Epic(jira_key="YAP-E1", project_code="YAP", summary="E", status="Done")
     story = Story(jira_key="YAP-S1", parent_epic_key="YAP-E1", summary="S", status="Done")

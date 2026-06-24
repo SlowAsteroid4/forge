@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -28,7 +28,7 @@ class ForecastService:
         return {
             "epics": epics,
             "n_closed_cycles": calc._n_closed,
-            "calculated_at": datetime.now(timezone.utc).isoformat(),
+            "calculated_at": datetime.now(UTC).isoformat(),
         }
 
     def get_epic_detail(self, epic_key: str) -> EpicForecast | None:

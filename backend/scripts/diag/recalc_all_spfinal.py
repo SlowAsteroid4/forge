@@ -37,7 +37,7 @@ def main() -> None:
         print(f"System player: {system_player.display_name} (id={system_player.id})")
 
         # Contar estado inicial
-        from sqlalchemy import func, text
+        from sqlalchemy import text
 
         result = session.execute(
             text(
@@ -92,7 +92,7 @@ def main() -> None:
                 errors += 1
                 print(f"  ERROR en {key}: {exc}")
 
-        print(f"\nRESULTADO RECALC:")
+        print("\nRESULTADO RECALC:")
         print(f"  Procesadas: {processed}")
         print(f"  Omitidas:   {skipped}")
         print(f"  Errores:    {errors}")

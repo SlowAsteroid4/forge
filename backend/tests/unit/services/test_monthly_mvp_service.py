@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 
 import pytest
 from sqlalchemy.orm import Session
@@ -16,7 +16,6 @@ from forge.db.models.player import Player
 from forge.db.models.sp_adjustment import SpAdjustment
 from forge.db.models.subtask import Subtask
 from forge.services.monthly_mvp_service import MonthlyMvpService
-
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -85,7 +84,7 @@ def _four_closed_cycles_with_mvps(
     days = [4, 11, 18, 25]
     mvp_ids = [mvp_player_id, extra_player_id or mvp_player_id, mvp_player_id, mvp_player_id]
     cycles = []
-    for week, day, pid in zip([19, 20, 21, 22], days, mvp_ids):
+    for week, day, pid in zip([19, 20, 21, 22], days, mvp_ids, strict=False):
         cycles.append(
             _cycle(session, week=week, day_start=day, status="closed", mvp_player_id=pid)
         )

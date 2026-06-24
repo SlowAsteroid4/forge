@@ -3,14 +3,13 @@
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, Enum, ForeignKey, Integer, Numeric, String, Text
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy import Boolean, Enum, ForeignKey, Integer, Numeric, String
+from sqlalchemy.orm import Mapped, mapped_column
 
 from forge.db.base import Base
 
 if TYPE_CHECKING:
-    from forge.db.models.class_ import Class
-    from forge.db.models.avatar import Avatar
+    pass
 
 
 class Player(Base):

@@ -15,8 +15,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from sqlalchemy import select, text
 
-from forge.db.session import SessionLocal
 from forge.db.models.subtask import Subtask
+from forge.db.session import SessionLocal
 
 
 def main() -> None:

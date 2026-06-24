@@ -13,8 +13,14 @@ jobs:
       - name: Verificar nombre de rama
         run: |
           BRANCH="${{ github.head_ref }}"
-          PATTERN="^(feature|fix|hotfix|chore|docs|refactor|test)/[a-z0-9][a-z0-9-]*$"
 
+          # Las ramas permanentes nunca se validan con esta regla
+          if [[ "$BRANCH" =~ ^(main|master|staging|develop)$ ]]; then
+            echo "Rama permanente '$BRANCH' — validación omitida."
+            exit 0
+          fi
+
+          PATTERN="^(feature|fix|hotfix|chore|docs|refactor|test)/[a-z0-9][a-z0-9-]*$"
           if [[ "$BRANCH" =~ $PATTERN ]]; then
             echo "Nombre de rama válido: $BRANCH"
           else

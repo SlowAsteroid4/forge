@@ -12,7 +12,6 @@ from forge.db.models.project import Project
 from forge.db.models.subtask import Subtask
 from forge.services.dashboard_service import DashboardService, _delta_pct
 
-
 # ──────────────────────────────────────────────
 # Factories de fixtures
 # ──────────────────────────────────────────────

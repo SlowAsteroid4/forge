@@ -19,7 +19,6 @@ from forge.db.models.subtask import Subtask
 from forge.db.session import get_session
 from forge.main import app
 
-
 # ──────────────────────────────────────────────────────────────
 # Fixtures
 # ──────────────────────────────────────────────────────────────

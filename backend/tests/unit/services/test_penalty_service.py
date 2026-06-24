@@ -15,7 +15,6 @@ COBERTURA:
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
 
 import pytest
 from sqlalchemy import select
@@ -28,7 +27,6 @@ from forge.db.models.player import Player
 from forge.db.models.sp_adjustment import SpAdjustment
 from forge.db.models.subtask import Subtask
 from forge.services import penalty_service
-
 
 # ── Helpers ───────────────────────────────────────────────────────────────
 

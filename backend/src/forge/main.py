@@ -3,7 +3,20 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from forge.api.routers import analytics, arena_auth, costs, cp_approvals, cycle_admin, dashboard, forecast, integrations, monthly_mvp, penalties, player_admin, pulse
+from forge.api.routers import (
+    analytics,
+    arena_auth,
+    costs,
+    cp_approvals,
+    cycle_admin,
+    dashboard,
+    forecast,
+    integrations,
+    monthly_mvp,
+    penalties,
+    player_admin,
+    pulse,
+)
 from forge.core.config import get_settings
 from forge.core.logging import setup_logging
 

@@ -10,17 +10,16 @@ se pierde en la búsqueda antes de llegar al upsert.
 import asyncio
 import json
 import sys
-from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 from forge.core.config import get_settings
-from forge.db.session import SessionLocal
 from forge.db.models.subtask import Subtask
+from forge.db.session import SessionLocal
 from forge.etl.jira_client import JiraClient
-from forge.etl.time_metrics import extract_time_metrics
 from forge.etl.quality_metrics import extract_quality_metrics
+from forge.etl.time_metrics import extract_time_metrics
 from forge.services.engine.cp_calculator import calculate_cp, needs_approval
 
 KEY = "YAP-811"
@@ -37,7 +36,7 @@ async def main() -> None:
 
     # ── Estado actual en BD ──────────────────────────────────────────────────
     existing = session.get(Subtask, KEY)
-    print(f"\n[BD actual]")
+    print("\n[BD actual]")
     print(f"  complexity_size = {existing.complexity_size!r}")
     print(f"  cp              = {existing.cp!r}")
     print(f"  cp_approved_at  = {existing.cp_approved_at!r}")
@@ -45,7 +44,7 @@ async def main() -> None:
     print(f"  → guard activo (cp_approved_at IS NOT NULL): {existing.cp_approved_at is not None}")
 
     # ── (A) get_issue — fetch individual ────────────────────────────────────
-    print(f"\n[A] get_issue (fetch individual, todos los fields)")
+    print("\n[A] get_issue (fetch individual, todos los fields)")
     issue_full = await client.get_issue(KEY, expand="changelog")
     f_full = issue_full.get("fields", {})
     cf_full = f_full.get("customfield_10851")
@@ -58,7 +57,7 @@ async def main() -> None:
     print(f"  → cp calculado:             {cp_full!r}")
 
     # ── (B) search_issues con JQL — simula lo que hace sync_all ─────────────
-    print(f"\n[B] search_issues via JQL (simula sync_all)")
+    print("\n[B] search_issues via JQL (simula sync_all)")
     jql_default = "project = YAP AND updated >= -14d ORDER BY updated DESC"
     jql_specific = f'issue = "{KEY}"'   # forzamos YAP-811 para el diagnóstico
     print(f"  JQL sync real:      {jql_default!r}")
@@ -83,7 +82,7 @@ async def main() -> None:
     print(f"  → cp calculado:             {cp_search!r}")
 
     # ── (C) Construir subtask_data completo (replica _sync_subtask) ──────────
-    print(f"\n[C] subtask_data en MEMORIA justo antes del upsert (usando issue de search)")
+    print("\n[C] subtask_data en MEMORIA justo antes del upsert (usando issue de search)")
     fields = f_search
     time_metrics = extract_time_metrics(issue_search)
     quality_metrics = extract_quality_metrics(issue_search)
@@ -115,11 +114,11 @@ async def main() -> None:
         popped_cp   = subtask_data.pop("cp", None)
         popped_size = subtask_data.pop("complexity_size", None)
         subtask_data.pop("cp_approval_required", None)
-        print(f"\n  ⚠️  GUARD ACTIVO (cp_approved_at IS NOT NULL)")
+        print("\n  ⚠️  GUARD ACTIVO (cp_approved_at IS NOT NULL)")
         print(f"     → popped complexity_size = {popped_size!r}")
         print(f"     → complexity_size tras pop = {subtask_data.get('complexity_size')!r}")
     else:
-        print(f"\n  Guard inactivo (cp_approved_at IS NULL) — complexity_size permanece en subtask_data")
+        print("\n  Guard inactivo (cp_approved_at IS NULL) — complexity_size permanece en subtask_data")
         print(f"  complexity_size TRAS guard = {subtask_data.get('complexity_size')!r}")
 
     # ── Comparación final ────────────────────────────────────────────────────
@@ -133,14 +132,14 @@ async def main() -> None:
 
     if talla_full != talla_search:
         print(f"\n  ❌ MISMATCH: get_issue='{talla_full}' vs search_issues='{talla_search}'")
-        print(f"     → El campo se pierde en la búsqueda (campos restringidos del JQL search)")
+        print("     → El campo se pierde en la búsqueda (campos restringidos del JQL search)")
     elif in_memory is None:
-        print(f"\n  ❌ Se pierde en el MAPEO (parseo en memoria ya da None)")
+        print("\n  ❌ Se pierde en el MAPEO (parseo en memoria ya da None)")
     elif in_memory is not None and existing.complexity_size is None:
         print(f"\n  ⚠️  En memoria = {in_memory!r} pero BD = NULL")
-        print(f"     → Se pierde en el WRITE o en el COMMIT")
+        print("     → Se pierde en el WRITE o en el COMMIT")
     else:
-        print(f"\n  ✅ Coinciden — problema no detectado en esta ruta")
+        print("\n  ✅ Coinciden — problema no detectado en esta ruta")
 
     session.close()
 

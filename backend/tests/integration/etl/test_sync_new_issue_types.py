@@ -3,11 +3,10 @@ Integración: los 4 tipos nuevos (WP-07j) se sincronizan como subtasks,
 y los tipos desconocidos se ignoran.
 """
 
-from datetime import datetime
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from forge.db.base import Base
@@ -102,8 +101,9 @@ def test_unknown_issue_type_is_ignored(db_session: Session) -> None:
     # La lista de tipos está en sync_all; aquí validamos que si lo forzamos, sí lo persiste
     # (la responsabilidad de filtrar es del loop, no de _sync_subtask).
     # → Lo que debemos testear es que el tipo no está en la lista permitida.
-    from forge.etl.sync_orchestrator import SyncOrchestrator as SO
     import inspect
+
+    from forge.etl.sync_orchestrator import SyncOrchestrator as SO
     source = inspect.getsource(SO.sync_all)
     assert "Alien Sub-task" not in source, "Alien Sub-task no debería estar en la lista"
     for new_type in NEW_TYPES:

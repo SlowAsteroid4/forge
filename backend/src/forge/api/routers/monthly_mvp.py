@@ -88,8 +88,9 @@ def close_month(
         player = session.get(Player, record.player_id)
         display_name = player.display_name if player else f"Player {record.player_id}"
 
-        from forge.db.models.achievement_unlock import AchievementUnlock
         from sqlalchemy import select
+
+        from forge.db.models.achievement_unlock import AchievementUnlock
 
         ach_unlocked = session.scalar(
             select(AchievementUnlock).where(

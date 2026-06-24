@@ -5,7 +5,6 @@ from datetime import datetime
 from sqlalchemy import MetaData
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
-
 # Naming convention para Alembic
 NAMING_CONVENTION = {
     "ix": "ix_%(column_0_label)s",

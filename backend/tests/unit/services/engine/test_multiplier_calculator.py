@@ -1,16 +1,16 @@
 """Tests para multiplier_calculator.py — cada multiplicador de SP."""
 
 import json
-from datetime import datetime, timezone, timedelta
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
 from forge.db.models.subtask import Subtask
 from forge.services.engine.multiplier_calculator import (
     _EXPECTED_HOURS_BY_SIZE,
+    _M_CALIDAD_DEFAULT,
     _M_CALIDAD_FIRST_PASS,
     _M_CALIDAD_MULTIPLE,
-    _M_CALIDAD_DEFAULT,
     _M_COOPERACION_BONUS,
     calc_all_multipliers,
     calc_m_calidad,
@@ -19,7 +19,6 @@ from forge.services.engine.multiplier_calculator import (
     calc_m_eficiencia,
     calc_m_lider,
 )
-
 
 # ── Fixture base ───────────────────────────────────────────────────────────
 
@@ -228,7 +227,7 @@ class TestMCooperacion:
         # Lunes 2026-05-18: CDMX está en CDT (UTC-5).
         # 15:00 UTC = 10:00 CDMX (horario hábil).
         # 17:00 UTC = 12:00 CDMX → 2 horas hábiles de bloqueo.
-        base = datetime(2026, 5, 18, 15, 0, tzinfo=timezone.utc)  # 10:00 CDMX
+        base = datetime(2026, 5, 18, 15, 0, tzinfo=UTC)  # 10:00 CDMX
         changelog = _changelog_with_blocking(base, base + timedelta(hours=2))
         st = _subtask(raw_changelog=changelog)
         assert calc_m_cooperacion(st) == pytest.approx(_M_COOPERACION_BONUS)
@@ -237,7 +236,7 @@ class TestMCooperacion:
         """Bloqueado varios días → excede 24h hábiles → sin bonus."""
         # Lunes 15:00 UTC (10:00 CDMX) → Viernes 20:00 UTC (15:00 CDMX)
         # = 4 días hábiles completos >> 24h hábiles
-        base = datetime(2026, 5, 18, 15, 0, tzinfo=timezone.utc)
+        base = datetime(2026, 5, 18, 15, 0, tzinfo=UTC)
         changelog = _changelog_with_blocking(base, base + timedelta(days=5))
         st = _subtask(raw_changelog=changelog)
         assert calc_m_cooperacion(st) == pytest.approx(1.0)

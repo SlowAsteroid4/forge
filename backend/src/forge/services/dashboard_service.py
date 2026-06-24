@@ -12,6 +12,18 @@ from forge.db.models.player import Player
 from forge.db.models.project import Project
 from forge.db.models.story import Story
 from forge.db.models.subtask import Subtask
+from forge.schemas.dashboard import (
+    AlertItem,
+    AreaProgress,
+    CycleHeader,
+    CycleSummary,
+    DashboardResponse,
+    KPICards,
+    KPIValue,
+    PlayerStatus,
+    ProjectSummary,
+    QAFirstPass,
+)
 
 # Apartado helpers (sub-división de YAP derivada del prefijo [XXX] en la épica)
 SIN_APARTADO = "Sin apartado"
@@ -31,18 +43,7 @@ def _apartado_of_summary(summary: str | None) -> str | None:
     if not inner or inner[0].isdigit():
         return None
     return inner
-from forge.schemas.dashboard import (
-    AlertItem,
-    AreaProgress,
-    CycleHeader,
-    CycleSummary,
-    DashboardResponse,
-    KPICards,
-    KPIValue,
-    PlayerStatus,
-    ProjectSummary,
-    QAFirstPass,
-)
+
 
 # ──────────────────────────────────────────────
 # Constantes de negocio

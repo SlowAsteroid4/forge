@@ -10,8 +10,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
+from forge.db.models import Player, Subtask
 from forge.db.session import SessionLocal
-from forge.db.models import Subtask, Player
 
 JUAN_ID = 7
 EDGAR_JIRA_ID = "712020:306bd3d6-6ce2-4e7c-a4ca-265297c06c99"
@@ -68,7 +68,7 @@ def main() -> None:
         edgar_name = players.get(EDGAR_JIRA_ID, "Edgar (no encontrado)")
 
         print(f"\n{'='*80}")
-        print(f"ASSIGNEE EN QA — subtasks de Juan Castillo (player_id=7)")
+        print("ASSIGNEE EN QA — subtasks de Juan Castillo (player_id=7)")
         print(f"Edgar Marroquin ID: {EDGAR_JIRA_ID[:20]}... = {edgar_name}")
         print(f"{'='*80}")
 
@@ -138,7 +138,7 @@ def main() -> None:
         print(f"  Entradas a QA analizadas (3 subtasks): {total_qa_entries}")
 
         if has_assignee_changes:
-            print(f"\n  Assignee durante entradas a QA (3 subtasks de Juan):")
+            print("\n  Assignee durante entradas a QA (3 subtasks de Juan):")
             for name, count in sorted(all_assignee_during_qa.items(), key=lambda x: -x[1]):
                 tag = " ← EDGAR" if edgar_name in name else ""
                 print(f"    {name!r}: {count} veces{tag}")
@@ -165,7 +165,7 @@ def main() -> None:
 
         if team_qa_assignees:
             total = sum(team_qa_assignees.values())
-            print(f"  (muestra: 50 subtasks Done con qa_first_pass NOT NULL)")
+            print("  (muestra: 50 subtasks Done con qa_first_pass NOT NULL)")
             for name, count in sorted(team_qa_assignees.items(), key=lambda x: -x[1]):
                 pct = count / total * 100
                 tag = " ← EDGAR" if edgar_name in name else ""

@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
-import pytest
 from datetime import date, datetime, timedelta
+
+import pytest
 from sqlalchemy.orm import Session
 
+from forge.core.exceptions import RuleViolationError
 from forge.db.models.achievement import Achievement
 from forge.db.models.achievement_unlock import AchievementUnlock
 from forge.db.models.cycle import Cycle
@@ -13,9 +15,7 @@ from forge.db.models.leaderboard_snapshot import LeaderboardSnapshot
 from forge.db.models.player import Player
 from forge.db.models.sp_adjustment import SpAdjustment
 from forge.db.models.subtask import Subtask
-from forge.core.exceptions import NotFoundError, RuleViolationError
 from forge.services.cycle_service import CycleService
-
 
 # ── Helpers de fixtures ───────────────────────────────────────────────────
 

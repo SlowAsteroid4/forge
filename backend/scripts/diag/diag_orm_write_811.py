@@ -5,7 +5,6 @@ Verifica si SQLAlchemy trackea el cambio y lo persiste.
 """
 
 import asyncio
-import json
 import shutil
 import sys
 from datetime import datetime
@@ -14,15 +13,16 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 import os
+
 os.environ.setdefault("DATABASE_URL", "sqlite:////tmp/diag_orm_811.db")
 
 from sqlalchemy import create_engine, text
-from sqlalchemy.orm import sessionmaker, Session
+from sqlalchemy.orm import sessionmaker
 
 from forge.db.models.subtask import Subtask
 from forge.etl.jira_client import JiraClient
-from forge.etl.time_metrics import extract_time_metrics
 from forge.etl.quality_metrics import extract_quality_metrics
+from forge.etl.time_metrics import extract_time_metrics
 from forge.services.engine.cp_calculator import calculate_cp, needs_approval
 
 KEY = "YAP-811"
@@ -88,9 +88,9 @@ async def main() -> None:
         subtask_data.pop("cp_approval_required", None)
         print(f"  ⚠️  Guard activo — popped complexity_size = {incoming_size!r}")
     else:
-        print(f"  Guard inactivo")
+        print("  Guard inactivo")
 
-    print(f"\n[ORM setattr loop]")
+    print("\n[ORM setattr loop]")
     for k, v in subtask_data.items():
         setattr(existing, k, v)
 
@@ -104,11 +104,11 @@ async def main() -> None:
         hist = insp.attrs["complexity_size"].history
         print(f"  complexity_size history: added={hist.added}  deleted={hist.deleted}")
     else:
-        print(f"  ⚠️  'complexity_size' NO está en dirty attrs — SQLAlchemy no lo trackeará!")
+        print("  ⚠️  'complexity_size' NO está en dirty attrs — SQLAlchemy no lo trackeará!")
 
     # ── Commit ────────────────────────────────────────────────────────────────
     session.commit()
-    print(f"  → session.commit() ejecutado")
+    print("  → session.commit() ejecutado")
 
     # ── Resultado ─────────────────────────────────────────────────────────────
     # New session to avoid identity map cache
@@ -117,7 +117,7 @@ async def main() -> None:
         text("SELECT complexity_size, cp FROM subtasks WHERE jira_key = :k"),
         {"k": KEY},
     ).one()
-    print(f"\n[DESPUÉS del commit — sesión nueva]")
+    print("\n[DESPUÉS del commit — sesión nueva]")
     print(f"  complexity_size = {row_after.complexity_size!r}")
     print(f"  cp              = {row_after.cp!r}")
 
@@ -127,7 +127,7 @@ async def main() -> None:
         print("   → El bug NO es que SQLAlchemy no persista — es algo del sync real.")
         print("   → Hipótesis: el sync real corre sobre instancias ya expiradas / identity map.")
     else:
-        print(f"❌ ORM setattr + commit NO persiste — complexity_size sigue NULL")
+        print("❌ ORM setattr + commit NO persiste — complexity_size sigue NULL")
         if "complexity_size" not in attrs_modified:
             print("   CAUSA: SQLAlchemy no marcó complexity_size como dirty")
             print("   → El campo se setea pero el ORM cree que no cambió (None→None o tipo mismatch)")
@@ -145,7 +145,7 @@ async def main() -> None:
     session2.close()
     engine.dispose()
     COPY_DB.unlink(missing_ok=True)
-    print(f"/tmp/diag_orm_811.db borrado ✓")
+    print("/tmp/diag_orm_811.db borrado ✓")
 
 
 if __name__ == "__main__":

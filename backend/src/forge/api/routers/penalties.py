@@ -10,9 +10,9 @@ from forge.db.session import get_session
 from forge.schemas.penalty import (
     ApplyPenaltyRequest,
     DebuffCatalogResponse,
-    PendingAppealsResponse,
     PenaltyActionResponse,
     PenaltyListResponse,
+    PendingAppealsResponse,
     ResolveAppealRequest,
     ReversePenaltyRequest,
 )

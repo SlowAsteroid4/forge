@@ -5,7 +5,6 @@ contiene la talla (XS/S/M/L/XL/XXL). Read-only, no escribe a forge.db.
 """
 
 import asyncio
-import json
 import sys
 from pathlib import Path
 
@@ -91,7 +90,7 @@ async def main() -> None:
                     all_talla_fields[fid] = set()
                 all_talla_fields[fid].add(val)
         else:
-            print(f"  (ningún customfield tiene valor de talla)")
+            print("  (ningún customfield tiene valor de talla)")
 
         # Scan for CP-like numeric values in customfields
         cp_like = {}
@@ -114,7 +113,7 @@ async def main() -> None:
     else:
         print("  Ninguno → la talla NO está en customfields estándar de estas subtasks")
 
-    print(f"\nVEREDICTO:")
+    print("\nVEREDICTO:")
     if "customfield_10851" in all_talla_fields:
         print("  ✅ customfield_10851 SÍ contiene talla → ETL correcto")
     else:

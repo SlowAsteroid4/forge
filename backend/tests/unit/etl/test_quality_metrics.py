@@ -1,6 +1,5 @@
 """Tests unitarios para quality_metrics — qa_first_pass con estados reales de Jira."""
 
-import pytest
 
 from forge.etl.quality_metrics import _compute_qa_first_pass, extract_quality_metrics
 

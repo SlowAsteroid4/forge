@@ -23,8 +23,9 @@ def check_env_file():
 def check_database():
     """Verificar que la BD está inicializada."""
     try:
-        from forge.db.session import engine
         from sqlalchemy import text
+
+        from forge.db.session import engine
 
         with engine.connect() as conn:
             result = conn.execute(text("SELECT name FROM sqlite_master WHERE type='table' LIMIT 1"))

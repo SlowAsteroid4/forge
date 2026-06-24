@@ -9,8 +9,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
+from forge.db.models import Cycle, Subtask
 from forge.db.session import SessionLocal
-from forge.db.models import Subtask, Cycle
 
 JUAN_ID = 7
 

@@ -6,7 +6,6 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
-
 AREA_VALUES = Literal["BE", "FE", "DESIGN", "DB", "QA", "PO", "PM"]
 EMPLOYMENT_VALUES = Literal["internal", "external"]
 

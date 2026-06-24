@@ -7,7 +7,6 @@ import pytest
 from forge.db.models.subtask import Subtask
 from forge.services.engine.sp_calculator import SpComponents, calculate_sp, needs_recalculation
 
-
 # ── Factories ──────────────────────────────────────────────────────────────
 
 

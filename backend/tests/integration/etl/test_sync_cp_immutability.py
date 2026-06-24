@@ -2,7 +2,7 @@
 
 import json
 from datetime import datetime
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 from sqlalchemy import create_engine, select
@@ -10,7 +10,6 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from forge.db.base import Base
 from forge.db.models.audit_log import AuditLog
-from forge.db.models.player import Player
 from forge.db.models.project import Project
 from forge.db.models.subtask import Subtask
 from forge.etl.sync_orchestrator import SyncOrchestrator

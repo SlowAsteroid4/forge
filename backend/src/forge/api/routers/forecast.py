@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from io import StringIO
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -16,7 +15,7 @@ from forge.schemas.forecast import (
     EpicForecastListResponse,
     RecalculateResponse,
 )
-from forge.services.engine.forecast import AreaForecast, EpicForecast
+from forge.services.engine.forecast import EpicForecast
 from forge.services.forecast_service import ForecastService
 
 router = APIRouter(tags=["forecast"])

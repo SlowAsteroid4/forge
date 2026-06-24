@@ -5,10 +5,9 @@ Valida la decisión JPDS WP-07h:
   - "In QA" / "Testing" → tiempo de QA/Edgar (qa_biz_hours, excluido de dev_resp)
 """
 
-import pytest
-from datetime import datetime, timezone
 
-from forge.etl.time_metrics import extract_time_metrics, HANDOFF_QA_STATES, ACTIVE_QA_STATES
+
+from forge.etl.time_metrics import ACTIVE_QA_STATES, HANDOFF_QA_STATES, extract_time_metrics
 
 
 def _ts(s: str) -> str:

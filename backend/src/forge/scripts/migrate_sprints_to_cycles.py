@@ -3,15 +3,15 @@
 import sys
 from datetime import date, datetime, timedelta
 
-from sqlalchemy import select, update
+from sqlalchemy import select
 
 sys.path.insert(0, "src")
 
-from forge.db.session import SessionLocal
-from forge.db.models.sprint import Sprint
 from forge.db.models.cycle import Cycle
-from forge.db.models.subtask import Subtask
 from forge.db.models.leaderboard_snapshot import LeaderboardSnapshot
+from forge.db.models.sprint import Sprint
+from forge.db.models.subtask import Subtask
+from forge.db.session import SessionLocal
 
 TODAY = date.today()
 ARCHIVED_THRESHOLD_DAYS = 7

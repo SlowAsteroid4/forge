@@ -249,7 +249,7 @@ def detect_all(
 
     for detector in detectors:
         try:
-            result = detector()
+            result = detector()  # type: ignore[no-untyped-call]
             if result is not None:
                 results.append(result)
         except Exception:

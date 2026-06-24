@@ -10,7 +10,6 @@ from forge.db.models.player import Player
 from forge.db.models.subtask import Subtask
 from forge.services.analytics_service import AnalyticsService, _parse_time_per_status
 
-
 # ──────────────────────────────────────────────
 # Factories
 # ──────────────────────────────────────────────
@@ -309,3 +308,336 @@ class TestParseTimePerStatus:
         assert result["In Review"] > 0
         # "Done" no tiene duración medida (es el último estado)
         assert "Done" not in result
+
+
+# ──────────────────────────────────────────────
+# WP-17a: Quality, vs ciclo anterior, canónico
+# ──────────────────────────────────────────────
+
+class TestQualitySummary:
+    def test_metrics_and_delta_vs_previous(self, test_session: Session) -> None:
+        prev = _cycle(test_session, "C-prev", status="closed", start_offset_weeks=2)
+        ref = _cycle(test_session, "C-ref", status="closed", start_offset_weeks=1)
+        # ref: 2 probadas (qa_first_pass set), 1 por probar (In QA), avg qa = (10+20)/2=15
+        _subtask(test_session, "R-1", cycle_id=ref.id, qa_first_pass=True, qa_h=10.0)
+        _subtask(test_session, "R-2", cycle_id=ref.id, qa_first_pass=False, qa_h=20.0)
+        _subtask(test_session, "R-3", status="In QA", cycle_id=ref.id)
+        # prev: 1 probada, avg qa = 5
+        _subtask(test_session, "P-1", cycle_id=prev.id, qa_first_pass=True, qa_h=5.0)
+        test_session.commit()
+
+        svc = AnalyticsService(test_session)
+        res = svc.quality_summary(cycle_id=ref.id)
+
+        assert res["reference_cycle"]["cycle_id"] == ref.id
+        assert res["previous_cycle"]["cycle_id"] == prev.id
+        assert res["tested"]["current"] == 2
+        assert res["tested"]["previous"] == 1
+        assert res["tested"]["delta_abs"] == 1
+        assert res["pending"]["current"] == 1
+        assert res["avg_qa_hours"]["current"] == pytest.approx(15.0)
+        assert res["avg_qa_hours"]["previous"] == pytest.approx(5.0)
+
+    def test_no_previous_cycle_means_sin_comparativa(self, test_session: Session) -> None:
+        ref = _cycle(test_session, "C-only", status="closed", start_offset_weeks=1)
+        _subtask(test_session, "O-1", cycle_id=ref.id, qa_first_pass=True, qa_h=8.0)
+        test_session.commit()
+
+        svc = AnalyticsService(test_session)
+        res = svc.quality_summary(cycle_id=ref.id)
+        assert res["previous_cycle"] is None
+        assert res["tested"]["previous"] is None
+        assert res["tested"]["delta_abs"] is None
+        assert res["tested"]["delta_pct"] is None
+
+    def test_zero_previous_yields_null_pct_not_infinity(self, test_session: Session) -> None:
+        prev = _cycle(test_session, "C-zprev", status="closed", start_offset_weeks=2)
+        ref = _cycle(test_session, "C-zref", status="closed", start_offset_weeks=1)
+        _subtask(test_session, "Z-ref", cycle_id=ref.id, qa_first_pass=True)
+        # prev sin probadas → previous=0
+        _subtask(test_session, "Z-prev", status="Backlog", cycle_id=prev.id)
+        test_session.commit()
+
+        svc = AnalyticsService(test_session)
+        res = svc.quality_summary(cycle_id=ref.id)
+        assert res["tested"]["previous"] == 0
+        assert res["tested"]["delta_pct"] is None  # no +inf inventado
+
+
+class TestQaFirstPassVsPrevious:
+    def test_dev_current_previous_delta(self, test_session: Session) -> None:
+        prev = _cycle(test_session, "Q-prev", status="closed", start_offset_weeks=2)
+        ref = _cycle(test_session, "Q-ref", status="closed", start_offset_weeks=1)
+        dev = _player(test_session, "dev-1", "Dev Uno", area="BE")
+        # ref: 1/2 pass = 50%
+        _subtask(test_session, "QR-1", cycle_id=ref.id, assignee_id=dev.id, qa_first_pass=True)
+        _subtask(test_session, "QR-2", cycle_id=ref.id, assignee_id=dev.id, qa_first_pass=False)
+        # prev: 1/1 pass = 100%
+        _subtask(test_session, "QP-1", cycle_id=prev.id, assignee_id=dev.id, qa_first_pass=True)
+        test_session.commit()
+
+        svc = AnalyticsService(test_session)
+        res = svc.qa_first_pass_vs_previous(cycle_id=ref.id)
+        row = next(d for d in res["devs"] if d["player_id"] == dev.id)
+        assert row["first_pass_pct"] == pytest.approx(50.0)
+        assert row["previous_pct"] == pytest.approx(100.0)
+        assert row["delta_pts"] == pytest.approx(-50.0)
+
+
+class TestTimeCanonical:
+    def test_bucket_sum_matches_total(self, test_session: Session) -> None:
+        ref = _cycle(test_session, "T-ref", status="closed", start_offset_weeks=1)
+        _subtask(
+            test_session, "TC-1", area="BE", cycle_id=ref.id,
+            dev_resp_h=10.0, qa_h=4.0, review_h=2.0, blocked_h=1.0, waiting_h=3.0,
+        )
+        test_session.commit()
+
+        svc = AnalyticsService(test_session)
+        rows = svc.time_canonical(group_by="area", scope="window")
+        be = next(r for r in rows if r["group_key"] == "BE")
+        # Re-etiquetado WP-07h → canónico
+        assert be["by_canonical"]["In Progress"] == pytest.approx(10.0)
+        assert be["by_canonical"]["In QA"] == pytest.approx(4.0)
+        assert be["by_canonical"]["In Review"] == pytest.approx(2.0)
+        assert be["by_canonical"]["Blocked"] == pytest.approx(1.0)
+        assert be["by_canonical"]["Waiting"] == pytest.approx(3.0)
+        # La suma de canónicos == total_h
+        assert sum(be["by_canonical"].values()) == pytest.approx(be["total_h"])
+        assert be["total_h"] == pytest.approx(20.0)
+
+    def test_area_filter_for_design(self, test_session: Session) -> None:
+        ref = _cycle(test_session, "T-design", status="closed", start_offset_weeks=1)
+        designer = _player(test_session, "des-1", "Jesús", area="DESIGN")
+        _subtask(test_session, "DD-1", area="DESIGN", cycle_id=ref.id,
+                 assignee_id=designer.id, dev_resp_h=5.0)
+        _subtask(test_session, "BB-1", area="BE", cycle_id=ref.id, dev_resp_h=99.0)
+        test_session.commit()
+
+        svc = AnalyticsService(test_session)
+        rows = svc.time_canonical(group_by="player", scope="window", area_filter="DESIGN")
+        assert all(r["area"] == "DESIGN" for r in rows)
+        assert any(r["display_name"] == "Jesús" for r in rows)
+
+
+# ──────────────────────────────────────────────
+# WP-17b — apartado, cycle/lead time, métricas por dev
+# ──────────────────────────────────────────────
+
+import json as _json  # noqa: E402
+
+from forge.core.time_utils import business_hours  # noqa: E402
+from forge.db.models.epic import Epic  # noqa: E402
+from forge.db.models.story import Story  # noqa: E402
+from forge.services.analytics_service import (  # noqa: E402
+    SIN_APARTADO,
+    _apartado_of_summary,
+    _canonical_cycle_hours,
+)
+
+
+def _changelog(*transitions: tuple[str, str]) -> str:
+    """Construye un raw_changelog JSON. transitions = (iso_ts, to_status). El orden de
+    entrada se respeta tal cual (para probar que el servicio ordena por timestamp)."""
+    histories = [
+        {"created": ts, "items": [{"field": "status", "toString": to}]}
+        for ts, to in transitions
+    ]
+    return _json.dumps({"histories": histories})
+
+
+def _epic(session: Session, key: str, summary: str) -> Epic:
+    e = Epic(jira_key=key, summary=summary, status="Done")
+    session.add(e)
+    session.flush()
+    return e
+
+
+def _story(session: Session, key: str, epic_key: str | None) -> Story:
+    st = Story(jira_key=key, parent_epic_key=epic_key, summary=f"Story {key}", status="Done")
+    session.add(st)
+    session.flush()
+    return st
+
+
+class TestApartadoOfSummary:
+    def test_extracts_bracket_prefix(self) -> None:
+        assert _apartado_of_summary("[YPAPP] Onboarding") == "YPAPP"
+        assert _apartado_of_summary("[PLD] Clientes") == "PLD"
+
+    def test_trims_leading_space(self) -> None:
+        assert _apartado_of_summary(" [YPAPP] Utilidades") == "YPAPP"
+
+    def test_version_container_is_not_apartado(self) -> None:
+        # Corchete numérico (versión) o no al inicio → None (cae en 'Sin apartado').
+        assert _apartado_of_summary("Version Container - [3.0]") is None
+        assert _apartado_of_summary("[2.1] algo") is None
+
+    def test_none_and_empty(self) -> None:
+        assert _apartado_of_summary(None) is None
+        assert _apartado_of_summary("Sin corchete") is None
+
+
+class TestCanonicalCycleHours:
+    def test_picks_earliest_in_progress_despite_unsorted_and_canonical_map(self) -> None:
+        # Histories en orden NO cronológico: Done primero, luego rework, luego el primer
+        # trabajo como 'UI' (que mapea canónicamente a In Progress).
+        cl = _changelog(
+            ("2026-04-08T12:00:00-0600", "Done"),
+            ("2026-04-07T10:00:00-0600", "In Progress"),  # rework (más tarde)
+            ("2026-04-06T10:00:00-0600", "UI"),  # primer trabajo real (crudo 'UI')
+        )
+        result = _canonical_cycle_hours(cl, None)
+        from forge.services.analytics_service import _parse_dt
+
+        expected = business_hours(
+            _parse_dt("2026-04-06T10:00:00-0600"), _parse_dt("2026-04-08T12:00:00-0600")
+        )
+        assert result == pytest.approx(expected)
+
+    def test_returns_none_without_in_progress(self) -> None:
+        cl = _changelog(("2026-04-08T12:00:00-0600", "Done"))
+        assert _canonical_cycle_hours(cl, None) is None
+
+    def test_none_changelog(self) -> None:
+        assert _canonical_cycle_hours(None, None) is None
+
+
+class TestApartado:
+    def _seed(self, session: Session) -> None:
+        e1 = _epic(session, "E-APP", "[YPAPP] Cuenta")
+        e2 = _epic(session, "E-VER", "Version Container - [3.0]")
+        s1 = _story(session, "ST-1", e1.jira_key)
+        s2 = _story(session, "ST-2", e2.jira_key)
+        c = _cycle(session, "AP-C", status="active", start_offset_weeks=0)
+        for k, story in (("AP-1", s1), ("AP-2", s1), ("AP-3", s2)):
+            sub = _subtask(session, k, cp=3, cycle_id=c.id)
+            sub.parent_story_key = story.jira_key
+        session.commit()
+
+    def test_apartados_counts_with_sin_apartado(self, test_session: Session) -> None:
+        self._seed(test_session)
+        svc = AnalyticsService(test_session)
+        out = {r["apartado"]: r["subtask_count"] for r in svc.apartados()}
+        assert out["YPAPP"] == 2
+        assert out[SIN_APARTADO] == 1
+        # 'Sin apartado' siempre va al final
+        assert svc.apartados()[-1]["apartado"] == SIN_APARTADO
+
+    def test_apartado_with_epic_but_no_subtasks_still_listed(
+        self, test_session: Session
+    ) -> None:
+        """WP-21: un apartado real (épica con prefijo) aparece aunque tenga 0 subtasks.
+
+        Reproduce el bug original: [YAPI]/[CAY] existían como épicas pero, al no tener
+        subtasks, la lista (derivada de conteos) los omitía. Ahora se derivan de épicas.
+        """
+        self._seed(test_session)  # crea épica [YPAPP] con 2 subtasks + 1 sin apartado
+        # Épica [YAPI] con story pero SIN subtasks → debe aparecer con conteo 0.
+        eapi = _epic(test_session, "E-API", "[YAPI] Transacciones")
+        _story(test_session, "ST-API", eapi.jira_key)
+        test_session.commit()
+
+        svc = AnalyticsService(test_session)
+        out = {r["apartado"]: r["subtask_count"] for r in svc.apartados()}
+        assert out["YAPI"] == 0  # presente pese a 0 subtasks
+        assert out["YPAPP"] == 2
+
+    def test_known_apartados_ordered_first(self, test_session: Session) -> None:
+        """WP-21: conocidos primero (en orden KNOWN_APARTADOS), 'Sin apartado' al final."""
+        # Un legítimo no-conocido (volumen alto → no es typo) + dos conocidos.
+        for key, summary in (
+            ("E-NEW", "[ZZZNEW] Iniciativa nueva"),
+            ("E-PLD", "[PLD] Clientes"),
+            ("E-APP", "[YPAPP] Cuenta"),
+        ):
+            e = _epic(test_session, key, summary)
+            s = _story(test_session, f"ST-{key}", e.jira_key)
+            for i in range(3):  # 3 subtasks c/u → volumen suficiente, no marcado como typo
+                sub = _subtask(test_session, f"{key}-{i}")
+                sub.parent_story_key = s.jira_key
+        test_session.commit()
+
+        svc = AnalyticsService(test_session)
+        order = [r["apartado"] for r in svc.apartados()]
+        # YPAPP y PLD (conocidos) van antes que ZZZNEW (no-conocido legítimo).
+        assert order.index("YPAPP") < order.index("PLD") < order.index("ZZZNEW")
+
+    def test_unknown_legit_prefix_shown_not_hidden(self, test_session: Session) -> None:
+        """WP-21: un prefijo nuevo legítimo se muestra (no se esconde) y no es typo."""
+        e = _epic(test_session, "E-NEW", "[ZZZNEW] Iniciativa")
+        s = _story(test_session, "ST-NEW", e.jira_key)
+        for i in range(5):
+            sub = _subtask(test_session, f"NEW-{i}")
+            sub.parent_story_key = s.jira_key
+        test_session.commit()
+
+        svc = AnalyticsService(test_session)
+        row = next(r for r in svc.apartados() if r["apartado"] == "ZZZNEW")
+        assert row["subtask_count"] == 5
+        assert row["known"] is False
+        assert row["suspected_typo"] is False
+
+    def test_suspected_typo_flagged_not_hidden(self, test_session: Session) -> None:
+        """WP-21: un prefijo mal escrito ([YPAP] vs [YPAPP]) con poco volumen se marca."""
+        e = _epic(test_session, "E-TYPO", "[YPAP] Cuneta")  # typo de YPAPP
+        s = _story(test_session, "ST-TYPO", e.jira_key)
+        sub = _subtask(test_session, "TYPO-1")
+        sub.parent_story_key = s.jira_key
+        test_session.commit()
+
+        svc = AnalyticsService(test_session)
+        row = next((r for r in svc.apartados() if r["apartado"] == "YPAP"), None)
+        assert row is not None  # NO se esconde
+        assert row["known"] is False
+        assert row["suspected_typo"] is True
+
+    def test_filter_restricts_results(self, test_session: Session) -> None:
+        self._seed(test_session)
+        svc = AnalyticsService(test_session)
+        ypapp = svc.cp_by_area(scope="cycle", apartado="YPAPP")
+        sin = svc.cp_by_area(scope="cycle", apartado=SIN_APARTADO)
+        assert sum(a["done_count"] for a in ypapp) == 2
+        assert sum(a["done_count"] for a in sin) == 1
+
+
+class TestDevMetrics:
+    def test_canonical_aggregates_raw(self, test_session: Session) -> None:
+        c = _cycle(test_session, "DM-C", status="active", start_offset_weeks=0)
+        dev = _player(test_session, "dm-1", "Juanito", area="BE")
+        # 1 subtask con tiempo en 'Ready' y 'Ready for QA' (ambos canónico→Ready) + In Progress.
+        sub = _subtask(
+            test_session, "DM-1", cycle_id=c.id, assignee_id=dev.id, qa_first_pass=True
+        )
+        sub.lt_biz_hours = 50.0
+        sub.raw_changelog = _changelog(
+            ("2026-04-06T09:00:00-0600", "Ready"),
+            ("2026-04-06T11:00:00-0600", "In Progress"),
+            ("2026-04-06T13:00:00-0600", "Ready for QA"),
+            ("2026-04-07T10:00:00-0600", "Done"),
+        )
+        test_session.commit()
+
+        svc = AnalyticsService(test_session)
+        m = svc.dev_metrics(player_id=dev.id, scope="cycle")
+        assert m is not None
+        assert m["display_name"] == "Juanito"
+        assert m["done_count"] == 1
+        assert m["lead_avg_h"] == 50.0
+        assert m["qa_first_pass_pct"] == 100.0
+
+        raw_total = sum(r["total_h"] for r in m["raw_states"])
+        canon_total = sum(r["total_h"] for r in m["canonical_states"])
+        assert raw_total == pytest.approx(canon_total)
+        # 'Ready' canónico = 'Ready' crudo + 'Ready for QA' crudo.
+        ready_raw = sum(
+            r["total_h"] for r in m["raw_states"] if r["status"] in ("Ready", "Ready for QA")
+        )
+        ready_canon = next(
+            r["total_h"] for r in m["canonical_states"] if r["status"] == "Ready"
+        )
+        assert ready_canon == pytest.approx(ready_raw)
+
+    def test_unknown_player_returns_none(self, test_session: Session) -> None:
+        svc = AnalyticsService(test_session)
+        assert svc.dev_metrics(player_id=99999, scope="historical") is None

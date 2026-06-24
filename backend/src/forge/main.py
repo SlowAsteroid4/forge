@@ -1,15 +1,29 @@
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from forge.api.routers import analytics, cp_approvals, cycle_admin, dashboard, integrations
+from forge.api.routers import (
+    analytics,
+    arena_auth,
+    costs,
+    cp_approvals,
+    cycle_admin,
+    dashboard,
+    forecast,
+    integrations,
+    monthly_mvp,
+    penalties,
+    player_admin,
+    pulse,
+)
 from forge.core.config import get_settings
 from forge.core.logging import setup_logging
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Lifecycle events de la app."""
     # Startup
     setup_logging()
@@ -42,10 +56,17 @@ app.include_router(dashboard.router, prefix=f"{settings.api_v1_prefix}/dashboard
 app.include_router(cp_approvals.router, prefix=f"{settings.api_v1_prefix}/cp-approvals")
 app.include_router(cycle_admin.router, prefix=f"{settings.api_v1_prefix}/admin")
 app.include_router(analytics.router, prefix=f"{settings.api_v1_prefix}/analytics")
+app.include_router(pulse.router, prefix=f"{settings.api_v1_prefix}/pulse")
+app.include_router(monthly_mvp.router, prefix=f"{settings.api_v1_prefix}/admin")
+app.include_router(penalties.router, prefix=f"{settings.api_v1_prefix}/penalties")
+app.include_router(forecast.router, prefix=f"{settings.api_v1_prefix}/forecast")
+app.include_router(player_admin.router, prefix=f"{settings.api_v1_prefix}/admin")
+app.include_router(costs.router, prefix=f"{settings.api_v1_prefix}/costs")
+app.include_router(arena_auth.router, prefix=settings.api_v1_prefix)
 
 
 @app.get("/")
-def root():
+def root() -> dict[str, str]:
     """Health check."""
     return {
         "app": settings.app_name,
@@ -55,7 +76,7 @@ def root():
 
 
 @app.get("/health")
-def health():
+def health() -> dict[str, object]:
     """Health check detallado."""
     return {
         "status": "healthy",

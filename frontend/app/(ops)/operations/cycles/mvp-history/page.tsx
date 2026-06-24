@@ -19,7 +19,7 @@ async function getMvpHistory(
 }
 
 async function getAllPlayers(): Promise<PlayerOption[]> {
-  return api.get<PlayerOption[]>("/admin/players").catch(() => []);
+  return api.get<PlayerOption[]>("/admin/players-options").catch(() => []);
 }
 
 function isWithin24BusinessHours(closedAt: string | null): boolean {

@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from sqlalchemy import ForeignKey, Integer, String, Text
+from sqlalchemy import ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from forge.db.base import Base
@@ -27,4 +27,11 @@ class MvpMonthly(Base):
     )
     period_label: Mapped[str] = mapped_column(
         String(20), nullable=False, comment="Ej: 2026-05"
+    )
+    source_cycle_ids: Mapped[str | None] = mapped_column(
+        Text, nullable=True, comment="JSON array of cycle IDs belonging to this month"
+    )
+
+    __table_args__ = (
+        UniqueConstraint("year", "month", name="uq_mvp_monthly_year_month"),
     )

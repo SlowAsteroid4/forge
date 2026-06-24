@@ -23,6 +23,10 @@ def get_cycle_dashboard(
         default=None,
         description="ID del ciclo (sin valor = ciclo activo).",
     ),
+    apartado: str | None = Query(
+        default=None,
+        description="Sub-división YAP: prefijo [XXX] de la épica, o 'Sin apartado'.",
+    ),
     session: Session = Depends(get_session),
 ) -> DashboardResponse:
     """
@@ -36,10 +40,13 @@ def get_cycle_dashboard(
     - Alertas accionables (abandonadas, bloqueadas, WIP excedido, CP pendiente)
 
     Cuando no hay ciclo activo devuelve `cycle=null` con `no_cycle_message`.
+    Soporta filtro por apartado (sub-división de YAP derivada del prefijo de la épica).
     """
     service = DashboardService(session)
     try:
-        return service.get_dashboard(project_code=project_code, cycle_id=cycle_id)
+        return service.get_dashboard(
+            project_code=project_code, cycle_id=cycle_id, apartado=apartado
+        )
     except NotFoundError as e:
         raise HTTPException(status_code=404, detail={"error": "not_found", "message": e.message})
     except Exception as e:

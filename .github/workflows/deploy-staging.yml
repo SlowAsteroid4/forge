@@ -1,0 +1,32 @@
+name: Deploy a staging
+
+on:
+  push:
+    branches: [staging]
+
+jobs:
+  deploy:
+    name: Deploy staging
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Install dependencies
+        working-directory: backend
+        run: uv sync
+
+      # Reemplaza este paso con el comando real de deploy (Railway, Render, Fly.io, etc.)
+      - name: Deploy
+        run: echo "Agrega aquí el comando de deploy a staging"
+        env:
+          DEPLOY_TOKEN: ${{ secrets.STAGING_DEPLOY_TOKEN }}

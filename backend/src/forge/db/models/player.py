@@ -3,14 +3,13 @@
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, Enum, ForeignKey, Integer, Numeric, String, Text
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy import Boolean, Enum, ForeignKey, Integer, Numeric, String
+from sqlalchemy.orm import Mapped, mapped_column
 
 from forge.db.base import Base
 
 if TYPE_CHECKING:
-    from forge.db.models.class_ import Class
-    from forge.db.models.avatar import Avatar
+    pass
 
 
 class Player(Base):
@@ -49,6 +48,13 @@ class Player(Base):
 
     is_lead: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False, index=True)
+
+    # Rol de gobierno opcional (WP-15). Metadata pura: NO altera 'area' ni la
+    # participación en producción/leaderboard. Ej: Jesús = PO pero area=DESIGN.
+    role: Mapped[str | None] = mapped_column(
+        String(20),
+        comment="Rol de gobierno opcional (ej. 'PO'); independiente de 'area'",
+    )
 
     # Identidad gamificada (Arena)
     class_code: Mapped[str | None] = mapped_column(

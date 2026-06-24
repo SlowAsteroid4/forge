@@ -1,4 +1,4 @@
-.PHONY: dev db-init db-reset seed sync test test-unit test-cov test-jira recalc shell lint format typecheck cycle-generate cycles-list sprint-generate
+.PHONY: dev db-init db-reset seed seed-epic-kinds sync sync-full prune prune-apply test test-unit test-cov test-jira recalc recalc-all shell lint format typecheck cycle-generate cycles-list sprint-generate
 
 dev:
 	uv run uvicorn forge.main:app --reload --port 8000
@@ -12,8 +12,23 @@ db-reset:
 seed:
 	uv run forge seed
 
+seed-epic-kinds:
+	uv run forge seed-epic-kinds
+
 sync:
 	uv run forge sync
+
+sync-full:
+	@echo "⚠️  Backfill completo — puede tardar varios minutos"
+	uv run forge sync --full
+
+prune:
+	@echo "🔍 Dry-run: muestra qué se borraría (no borra nada)"
+	uv run forge prune
+
+prune-apply:
+	@echo "🧹 Reconcilia borrados de Jira — BORRA registros obsoletos"
+	uv run forge prune --apply
 
 test:
 	uv run pytest
@@ -29,6 +44,9 @@ test-jira:
 
 recalc:
 	uv run forge recalc
+
+recalc-all:
+	uv run forge recalc --all-cycles --force
 
 cycle-generate:
 	uv run forge cycle-generate

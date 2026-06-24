@@ -1,21 +1,20 @@
 """Tests para cp_calculator.py — tabla de tallas, inmutabilidad, aprobación."""
 
+from datetime import UTC, datetime
+
 import pytest
-from datetime import datetime, timezone
 
 from forge.core.exceptions import CPImmutableError
 from forge.db.models.subtask import Subtask
 from forge.services.engine.cp_calculator import (
-    CP_TABLE,
     APPROVAL_REQUIRED,
-    REJECTED_SIZES,
+    CP_TABLE,
     assign_cp,
     calculate_cp,
     is_rejected_size,
     needs_approval,
     validate_immutability,
 )
-
 
 # ── Fixtures ───────────────────────────────────────────────────────────────
 
@@ -143,7 +142,7 @@ class TestValidateImmutability:
         validate_immutability(st)  # No debe lanzar
 
     def test_raises_when_approved(self) -> None:
-        approved_at = datetime(2026, 5, 1, tzinfo=timezone.utc)
+        approved_at = datetime(2026, 5, 1, tzinfo=UTC)
         st = _make_subtask(jira_key="YAP-99", cp_approved_at=approved_at)
         with pytest.raises(CPImmutableError) as exc_info:
             validate_immutability(st)

@@ -1,0 +1,16 @@
+# Graphify: excluir ruido del grafo de conocimiento (sintaxis tipo .gitignore)
+
+# Caches / artefactos de tests y herramientas
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+htmlcov/
+*.egg-info/
+
+# Salida del propio graphify
+graphify-out/
+
+# Bases de datos / binarios locales
+*.db
+*.sqlite
+*.sqlite3

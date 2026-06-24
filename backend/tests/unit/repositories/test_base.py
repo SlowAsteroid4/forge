@@ -1,6 +1,5 @@
 """Tests para BaseRepository usando Project como modelo concreto."""
 
-import pytest
 from sqlalchemy.orm import Session
 
 from forge.db.models.project import Project

@@ -1,0 +1,67 @@
+# epic_kinds.yaml — clasificación de contenedores de trabajo
+#
+# Aplicar con: make seed-epic-kinds  (idempotente, registra en audit_log)
+#
+# Valores válidos: normal | coordination | version_container
+# - version_container : cajón de tareas sin épica de objetivo (YAP-66, YAP-130)
+# - coordination      : tercero vivo — nunca cierra, flujo continuo de integración
+# - normal            : épica con objetivo y fecha de cierre → va al forecast
+#
+# ⚠️ PENDIENTE DE CONFIRMACIÓN DEL PM:
+# Las épicas [PLD], [CAY], [YAPI], [YPNX] son candidatas a 'coordination' (terceros / regulatorios).
+# Descomenta y ajusta epic_kind una vez confirmadas. Están como 'normal' por defecto.
+
+epics:
+  # ── Version Containers (100% confirmados) ──────────────────────────
+  - jira_key: YAP-66
+    epic_kind: version_container
+    note: "Version Container - [2.1] — cajón de tareas de release anterior"
+
+  - jira_key: YAP-130
+    epic_kind: version_container
+    note: "Version Container - [3.0] — cajón de tareas sin épica"
+
+  # ── Candidatos a coordination (requieren confirmación del PM) ───────
+  # Descomenta el bloque cuando el PM confirme que son terceros vivos:
+
+  # [PLD] — Prevención de Lavado de Dinero (regulatorio: CNBV/CONDUSEF)
+  # - jira_key: YAP-510
+  #   epic_kind: coordination
+  #   note: "[PLD] Alertas — regulatorio CNBV"
+  # - jira_key: YAP-509
+  #   epic_kind: coordination
+  #   note: "[PLD] Clientes"
+  # - jira_key: YAP-795
+  #   epic_kind: coordination
+  #   note: "[PLD] Configuraciones"
+  # - jira_key: YAP-587
+  #   epic_kind: coordination
+  #   note: "[PLD] Personas bloqueadas"
+  # (YAP-593, YAP-502, YAP-505 ya están Done — no afectan forecast)
+
+  # [CAY] — Caja de Ahorro (integración tercero)
+  # - jira_key: YAP-888
+  #   epic_kind: coordination
+  #   note: "[CAY] Operaciones CashIn/CashOut"
+
+  # [YAPI] — API para Comisionistas (tercero/canal externo)
+  # - jira_key: YAP-970
+  #   epic_kind: coordination
+  #   note: "[YAPI] API de Transacciones para Comisionistas"
+  # - jira_key: YAP-972
+  #   epic_kind: coordination
+  #   note: "[YAPI] Mecanismos de Seguridad"
+  # - jira_key: YAP-566
+  #   epic_kind: coordination
+  #   note: "[YAPI] Transacciones vía API Yapsi Business"
+
+  # [YPNX] — Canal NX (¿interno o tercero? — confirmar)
+  # - jira_key: YAP-912
+  #   epic_kind: coordination
+  #   note: "[YPNX] Acceso Seguro al Canal de Instrucción"
+  # - jira_key: YAP-907
+  #   epic_kind: coordination
+  #   note: "[YPNX] Factores de Autenticación Seguros"
+  # - jira_key: YAP-967
+  #   epic_kind: coordination
+  #   note: "[YPNX] Gestión De Mis Cuentas"

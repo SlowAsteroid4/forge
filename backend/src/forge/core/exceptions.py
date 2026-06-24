@@ -1,10 +1,12 @@
 """Excepciones personalizadas de Forge."""
 
+from typing import Any
+
 
 class ForgeError(Exception):
     """Excepción base para todos los errores de Forge."""
 
-    def __init__(self, message: str, details: dict[str, any] | None = None) -> None:
+    def __init__(self, message: str, details: dict[str, Any] | None = None) -> None:
         self.message = message
         self.details = details or {}
         super().__init__(self.message)

@@ -1,8 +1,8 @@
 """Motor de cálculo CP/SP — JPDS v2.0."""
 
 from forge.services.engine.cp_calculator import (
-    CP_TABLE,
     APPROVAL_REQUIRED,
+    CP_TABLE,
     REJECTED_SIZES,
     assign_cp,
     calculate_cp,

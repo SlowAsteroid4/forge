@@ -12,7 +12,6 @@ from forge.db.models.project import Project
 from forge.db.models.subtask import Subtask
 from forge.services.dashboard_service import DashboardService, _delta_pct
 
-
 # ──────────────────────────────────────────────
 # Factories de fixtures
 # ──────────────────────────────────────────────
@@ -269,14 +268,15 @@ def test_kpis_delta_none_when_no_previous_cycle(test_session: Session) -> None:
 # ──────────────────────────────────────────────
 
 
-def test_area_progress_returns_all_5_areas(test_session: Session) -> None:
+def test_area_progress_returns_all_6_areas(test_session: Session) -> None:
+    """BUG se agregó como área de seguimiento (WP-20 ajuste)."""
     cycle = _cycle(test_session)
     svc = DashboardService(test_session)
 
     result = svc.get_dashboard(cycle_id=cycle.id)
 
     areas = {ap.area for ap in result.area_progress}
-    assert areas == {"BE", "FE", "DESIGN", "DB", "QA"}
+    assert areas == {"BE", "FE", "DESIGN", "DB", "BUG", "QA"}
 
 
 def test_area_progress_cp_done_correct(test_session: Session) -> None:

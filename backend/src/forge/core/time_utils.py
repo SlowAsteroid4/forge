@@ -1,6 +1,7 @@
 """Utilidades para cálculo de tiempo hábil en CDMX."""
 
 from datetime import datetime, time, timedelta
+from typing import Any
 from zoneinfo import ZoneInfo
 
 from forge.core.config import get_settings
@@ -10,7 +11,7 @@ BUSINESS_DAYS = [0, 1, 2, 3, 4]  # Lunes a Viernes
 BUSINESS_HOURS_PER_DAY = 8.0  # 9-14 (5h) + 15-18 (3h)
 
 
-def get_business_hours_config() -> dict[str, any]:
+def get_business_hours_config() -> dict[str, Any]:
     """Obtener configuración de horario hábil desde settings."""
     settings = get_settings()
     return {

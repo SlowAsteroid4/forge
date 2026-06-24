@@ -5,8 +5,7 @@ Usan SQLite en memoria (conftest.py) para ser rápidos y aislados.
 Cada test crea los datos mínimos necesarios en la sesión de test.
 """
 
-import json
-from datetime import datetime, timezone, date, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
 from sqlalchemy.orm import Session
@@ -22,7 +21,6 @@ from forge.services.engine.engine_orchestrator import (
     recalculate_sprint,  # deprecated alias — still tested for backwards compat
     recalculate_subtask,
 )
-
 
 # ── Helpers de setup ──────────────────────────────────────────────────────
 
@@ -86,7 +84,7 @@ def _create_subtask(
     raw_changelog: str | None = None,
 ) -> Subtask:
     if done_at is None and status == "Done":
-        done_at = datetime(2026, 5, 20, 10, 0, tzinfo=timezone.utc)
+        done_at = datetime(2026, 5, 20, 10, 0, tzinfo=UTC)
 
     st = Subtask(
         jira_key=jira_key,

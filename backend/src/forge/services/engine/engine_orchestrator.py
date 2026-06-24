@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -230,7 +231,7 @@ def _get_active_engine_version(session: Session) -> EngineVersion | None:
     return session.scalars(stmt).first()
 
 
-def _apply_time_metrics(subtask: Subtask, metrics: dict) -> None:
+def _apply_time_metrics(subtask: Subtask, metrics: dict[str, Any]) -> None:
     """Escribir métricas de tiempo calculadas en el modelo Subtask."""
     # done_at solo se actualiza si aún no está definido (evita sobrescribir
     # valores correctos en casos donde la API de Jira lo reporta explícitamente)
@@ -316,6 +317,10 @@ def _sum_adjustments(session: Session, subtask_key: str) -> tuple[float, float]:
     """
     Sumar todos los SpAdjustments de la subtask.
 
+    Tipos que suman como penalización: penalty, debuff_manual.
+    Tipos que suman como bono (offset): bonus, reversal.
+    mvp_bonus y mvp_reversal son player-level, no afectan sp_final de subtask.
+
     Returns:
         (total_bonus, total_penalty) — ambos valores positivos.
     """
@@ -325,8 +330,11 @@ def _sum_adjustments(session: Session, subtask_key: str) -> tuple[float, float]:
         )
     ).fetchall()
 
-    total_bonus = sum(r.amount_sp for r in rows if r.adjustment_type == "bonus")
-    total_penalty = sum(r.amount_sp for r in rows if r.adjustment_type == "penalty")
+    _PENALTY_TYPES = {"penalty", "debuff_manual"}
+    _BONUS_TYPES = {"bonus", "reversal"}
+
+    total_bonus = sum(r.amount_sp for r in rows if r.adjustment_type in _BONUS_TYPES)
+    total_penalty = sum(r.amount_sp for r in rows if r.adjustment_type in _PENALTY_TYPES)
     return total_bonus, total_penalty
 
 

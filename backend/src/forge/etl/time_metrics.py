@@ -5,7 +5,6 @@ from typing import Any
 
 from forge.core.time_utils import business_hours
 
-
 _DONE_STATUSES = frozenset({"Done", "Cerrado", "Closed", "Resuelto", "Resolved"})
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -127,7 +126,7 @@ def _parse_jira_datetime(date_str: str | None) -> datetime | None:
     try:
         # Formato típico: 2024-01-15T14:30:00.000-0600
         return datetime.fromisoformat(date_str.replace("Z", "+00:00"))
-    except:
+    except (ValueError, AttributeError):
         return None
 
 

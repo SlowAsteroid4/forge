@@ -35,4 +35,9 @@ jobs:
 
       - name: Tests unitarios
         working-directory: backend
+        env:
+          JIRA_INSTANCE_URL: https://test.atlassian.net
+          JIRA_USER_EMAIL: test@test.com
+          JIRA_API_TOKEN: test-api-token
+          ENCRYPTION_KEY: test-encryption-key-for-unit-tests-only
         run: uv run pytest tests/unit -v

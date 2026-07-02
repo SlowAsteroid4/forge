@@ -8,7 +8,7 @@ from forge.api.routers import (
     analytics,
     arena_auth,
     costs,
-    cp_approvals,
+    cp_worklist,
     cycle_admin,
     dashboard,
     forecast,
@@ -53,7 +53,7 @@ app.add_middleware(
 # Routers
 app.include_router(integrations.router, prefix=f"{settings.api_v1_prefix}/integrations")
 app.include_router(dashboard.router, prefix=f"{settings.api_v1_prefix}/dashboard")
-app.include_router(cp_approvals.router, prefix=f"{settings.api_v1_prefix}/cp-approvals")
+app.include_router(cp_worklist.router, prefix=f"{settings.api_v1_prefix}/cp-worklist")
 app.include_router(cycle_admin.router, prefix=f"{settings.api_v1_prefix}/admin")
 app.include_router(analytics.router, prefix=f"{settings.api_v1_prefix}/analytics")
 app.include_router(pulse.router, prefix=f"{settings.api_v1_prefix}/pulse")

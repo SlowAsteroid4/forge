@@ -2,10 +2,8 @@
 
 from datetime import datetime
 
-import pytest
 from sqlalchemy.orm import Session
 
-from forge.core.exceptions import CPImmutableError
 from forge.db.models.subtask import Subtask
 from forge.repositories.subtask import SubtaskRepository
 
@@ -18,6 +16,7 @@ def _make_subtask(
     area: str = "BE",
     cp: int | None = None,
     sp_final: float | None = None,
+    complexity_size: str | None = None,
     cp_approval_required: bool = False,
     cp_approved_at: datetime | None = None,
 ) -> Subtask:
@@ -31,6 +30,7 @@ def _make_subtask(
         cycle_id=cycle_id,
         cp=cp,
         sp_final=sp_final,
+        complexity_size=complexity_size,
         cp_approval_required=cp_approval_required,
         cp_approved_at=cp_approved_at,
     )
@@ -107,24 +107,17 @@ def test_list_done_cycle_filter(test_session: Session) -> None:
     assert results[0].jira_key == "T-40"
 
 
-def test_list_pending_cp_approval_only_large_unapproved(test_session: Session) -> None:
+def test_list_xxl_detected_only_xxl(test_session: Session) -> None:
     repo = SubtaskRepository(test_session)
-    # Requiere aprobación, sin fecha → debe aparecer
-    test_session.add(_make_subtask("T-50", cp_approval_required=True, cp_approved_at=None))
-    # Requiere aprobación, ya aprobado → no debe aparecer
-    test_session.add(
-        _make_subtask("T-51", cp_approval_required=True, cp_approved_at=datetime.utcnow())
-    )
-    # No requiere aprobación → no debe aparecer
-    test_session.add(_make_subtask("T-52", cp_approval_required=False))
+    test_session.add(_make_subtask("T-50", complexity_size="XXL", cp=13))
+    test_session.add(_make_subtask("T-51", complexity_size="L", cp=5))
+    test_session.add(_make_subtask("T-52", complexity_size=None))
     test_session.flush()
 
-    results = repo.list_pending_cp_approval()
+    results = repo.list_xxl_detected()
 
     keys = {s.jira_key for s in results}
-    assert "T-50" in keys
-    assert "T-51" not in keys
-    assert "T-52" not in keys
+    assert keys == {"T-50"}
 
 
 def test_get_cp_sum_aggregates_correctly(test_session: Session) -> None:
@@ -191,25 +184,3 @@ def test_upsert_updates_existing(test_session: Session) -> None:
 
     assert updated.status == "Done"
     assert updated.summary == "Updated summary"
-
-
-def test_approve_cp_sets_approved_at(test_session: Session) -> None:
-    repo = SubtaskRepository(test_session)
-    test_session.add(_make_subtask("T-90", cp_approval_required=True))
-    test_session.flush()
-
-    now = datetime.utcnow()
-    result = repo.approve_cp("T-90", approver_id=1, approved_at=now)
-
-    assert result.cp_approved_at == now
-    assert result.cp_approved_by == 1
-
-
-def test_approve_cp_raises_if_already_approved(test_session: Session) -> None:
-    repo = SubtaskRepository(test_session)
-    already = _make_subtask("T-91", cp_approved_at=datetime.utcnow())
-    test_session.add(already)
-    test_session.flush()
-
-    with pytest.raises(CPImmutableError):
-        repo.approve_cp("T-91", approver_id=1, approved_at=datetime.utcnow())

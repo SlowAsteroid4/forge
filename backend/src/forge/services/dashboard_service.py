@@ -488,7 +488,7 @@ class DashboardService:
         alerts: list[AlertItem] = []
         alerts.extend(self._alerts_abandoned(cycle, project_code, story_keys))
         alerts.extend(self._alerts_waiting_long(cycle, project_code, story_keys))
-        alerts.extend(self._alerts_cp_pending(cycle, project_code, story_keys))
+        alerts.extend(self._alerts_xxl_detected(cycle, project_code, story_keys))
         alerts.extend(self._alerts_wip_exceeded(cycle, project_code, story_keys))
         return alerts
 
@@ -547,16 +547,18 @@ class DashboardService:
             for r in rows
         ]
 
-    def _alerts_cp_pending(
+    def _alerts_xxl_detected(
         self, cycle: Cycle, project_code: str | None, story_keys: frozenset[str] | None = None
     ) -> list[AlertItem]:
-        """L/XL sin CP aprobado."""
+        """XXL detectadas — talla rechazada, requieren ruptura (WP-24/ADR-016).
+
+        Las demás tallas ya no generan alerta: el CP se auto-lockea en el sync.
+        """
         stmt = (
             select(Subtask.jira_key, Subtask.assignee_player_id)
             .where(
                 Subtask.cycle_id == cycle.id,
-                Subtask.cp_approval_required.is_(True),
-                Subtask.cp_approved_at.is_(None),
+                Subtask.complexity_size == "XXL",
             )
         )
         if project_code:
@@ -566,9 +568,9 @@ class DashboardService:
         rows = self._s.execute(stmt).all()
         return [
             AlertItem(
-                alert_type="cp_pending_approval",
+                alert_type="xxl_detected",
                 severity="warning",
-                message=f"{r.jira_key} requiere aprobación de CP (talla L/XL).",
+                message=f"{r.jira_key} tiene talla XXL — no se acepta, requiere ruptura.",
                 subtask_key=r.jira_key,
                 player_id=r.assignee_player_id,
             )

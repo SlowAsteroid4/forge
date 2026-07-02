@@ -21,6 +21,7 @@ from forge.etl.jira_client import JiraClient
 from forge.etl.project_matcher import match_project
 from forge.etl.quality_metrics import extract_quality_metrics
 from forge.etl.time_metrics import extract_time_metrics
+from forge.services.engine.cp_autolock import auto_lock_cp
 from forge.services.engine.cp_calculator import calculate_cp, needs_approval
 
 logger = get_logger(__name__)
@@ -139,6 +140,11 @@ class SyncOrchestrator:
             next_page_token = response.get("nextPageToken")
             if not next_page_token:
                 break
+
+        # Auto-lock de CP (WP-24/ADR-016): corre después de los upserts para que
+        # el valor legítimo de Jira aterrice primero y luego se lockee.
+        stats["cp_auto_locked"] = auto_lock_cp(self.session)
+        self.session.commit()
 
         logger.info(f"Sync completado: {stats}")
         return stats

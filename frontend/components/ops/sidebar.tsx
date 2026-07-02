@@ -63,8 +63,8 @@ const navSections: NavSection[] = [
     title: "Operación",
     items: [
       {
-        label: "Aprobaciones CP",
-        href: "/operations/cp-approvals",
+        label: "Subtasks sin CP",
+        href: "/operations/cp-worklist",
         icon: <CheckSquare size={16} />,
       },
       {
@@ -150,13 +150,13 @@ const navSections: NavSection[] = [
 
 export function OpsSidebar() {
   const pathname = usePathname();
-  const [cpPendingCount, setCpPendingCount] = useState(0);
+  const [cpWorklistCount, setCpWorklistCount] = useState(0);
   const [appealsPendingCount, setAppealsPendingCount] = useState(0);
 
   useEffect(() => {
-    fetch(`${API_BASE}/cp-approvals/pending`)
+    fetch(`${API_BASE}/cp-worklist`)
       .then((r) => r.json())
-      .then((data: { total?: number }) => setCpPendingCount(data.total ?? 0))
+      .then((data: { total?: number }) => setCpWorklistCount(data.total ?? 0))
       .catch(() => {});
     fetch(`${API_BASE}/penalties/appeals/pending`)
       .then((r) => r.json())
@@ -209,10 +209,10 @@ export function OpsSidebar() {
                             {item.badge}
                           </Badge>
                         )}
-                        {/* Badge dinámico para aprobaciones CP */}
-                        {item.href === "/operations/cp-approvals" && cpPendingCount > 0 && (
+                        {/* Badge dinámico: subtasks sin CP (WP-24) */}
+                        {item.href === "/operations/cp-worklist" && cpWorklistCount > 0 && (
                           <Badge variant="destructive" className="h-4 px-1 text-[10px]">
-                            {cpPendingCount}
+                            {cpWorklistCount}
                           </Badge>
                         )}
                         {/* Badge dinámico para apelaciones pendientes */}

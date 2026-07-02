@@ -86,7 +86,7 @@ AlertTypeEnum = Literal[
     "abandoned_subtask",
     "waiting_long",
     "wip_exceeded",
-    "cp_pending_approval",
+    "xxl_detected",
     "bug_unattributed",
 ]
 

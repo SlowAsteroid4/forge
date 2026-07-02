@@ -93,3 +93,9 @@ Thumbs.db
 
 # Graphify (grafo de conocimiento local — se reconstruye con `graphify .`)
 graphify-out/
+
+# DB backups con sufijo de WP (forge.db.bak-wpNN)
+*.db.bak-*
+
+# Obsidian workspace (config local del editor)
+vault/.obsidian/

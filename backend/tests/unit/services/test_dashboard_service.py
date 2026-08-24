@@ -74,6 +74,7 @@ def _subtask(
     sp_final: float | None = None,
     issue_type: str = "Backend Sub-task",
     project_code: str | None = None,
+    complexity_size: str | None = None,
     cp_approval_required: bool = False,
     cp_approved_at: datetime | None = None,
     created_at_offset: int = 0,
@@ -90,6 +91,7 @@ def _subtask(
         cp=cp,
         sp_final=sp_final,
         project_code=project_code,
+        complexity_size=complexity_size,
         cp_approval_required=cp_approval_required,
         cp_approved_at=cp_approved_at,
         qa_first_pass=qa_first_pass,
@@ -434,18 +436,21 @@ def test_alerts_no_abandoned_for_recent_subtask(test_session: Session) -> None:
     assert not any(a.subtask_key == "T-NEW" for a in abandoned)
 
 
-def test_alerts_cp_pending_approval(test_session: Session) -> None:
+def test_alerts_xxl_detected(test_session: Session) -> None:
+    """WP-24: solo XXL genera alerta; L/XL ya no (el CP se auto-lockea en el sync)."""
     cycle = _cycle(test_session)
+    _subtask(test_session, "T-XXL", cycle_id=cycle.id, complexity_size="XXL", cp=13)
     _subtask(
-        test_session, "T-CP", cycle_id=cycle.id,
+        test_session, "T-L", cycle_id=cycle.id, complexity_size="L", cp=5,
         cp_approval_required=True, cp_approved_at=None
     )
     svc = DashboardService(test_session)
 
     result = svc.get_dashboard(cycle_id=cycle.id)
 
-    cp_alerts = [a for a in result.alerts if a.alert_type == "cp_pending_approval"]
-    assert any(a.subtask_key == "T-CP" for a in cp_alerts)
+    xxl_alerts = [a for a in result.alerts if a.alert_type == "xxl_detected"]
+    assert any(a.subtask_key == "T-XXL" for a in xxl_alerts)
+    assert not any(a.subtask_key == "T-L" for a in xxl_alerts)
 
 
 def test_alerts_wip_exceeded_alert_generated(test_session: Session) -> None:

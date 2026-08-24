@@ -7,7 +7,7 @@ const ALERT_ICONS: Record<string, React.ReactNode> = {
   waiting_long: <Clock size={14} />,
   waiting_no_ticket: <Clock size={14} />,
   wip_exceeded: <Users size={14} />,
-  cp_pending_approval: <CheckSquare size={14} />,
+  xxl_detected: <CheckSquare size={14} />,
   derived_bug_unresolved: <Bug size={14} />,
 };
 

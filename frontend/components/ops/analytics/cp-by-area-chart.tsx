@@ -45,9 +45,11 @@ export function CpByAreaChart({ areas, usesWindowFallback }: CpByAreaChartProps)
           <Tooltip
             formatter={(value, name) => [
               Number(value ?? 0),
-              String(name ?? "") === "cp" ? "CP" : "Subtasks",
+              String(name ?? "").toLowerCase() === "cp" ? "CP" : "Subtasks",
             ]}
             contentStyle={{ fontSize: 12, backgroundColor: "var(--popover)", border: "1px solid var(--border)", color: "var(--popover-foreground)", borderRadius: "var(--radius-md)" }}
+            itemStyle={{ color: "var(--popover-foreground)" }}
+            labelStyle={{ color: "var(--popover-foreground)" }}
             cursor={{ fill: "var(--muted)" }}
           />
           <Bar dataKey="cp" name="CP" radius={[2, 2, 0, 0]}>

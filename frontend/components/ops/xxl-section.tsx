@@ -1,7 +1,3 @@
-"use client";
-
-import { useState } from "react";
-import { useRouter } from "next/navigation";
 import {
   Table,
   TableBody,
@@ -10,39 +6,21 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Button } from "@/components/ui/button";
-import { api, ApiError } from "@/lib/api";
-import type { XxlItem } from "@/lib/types/cp-approvals";
+import type { XxlWorklistItem } from "@/lib/types/cp-worklist";
 
 interface Props {
-  items: XxlItem[];
+  items: XxlWorklistItem[];
+  jiraBaseUrl: string | null;
 }
 
-export function XxlSection({ items }: Props) {
-  const router = useRouter();
-  const [loadingKey, setLoadingKey] = useState<string | null>(null);
-  const [errors, setErrors] = useState<Record<string, string>>({});
-
-  async function handleMarkNotified(jiraKey: string) {
-    setLoadingKey(jiraKey);
-    setErrors((prev) => ({ ...prev, [jiraKey]: "" }));
-    try {
-      await api.post(`/cp-approvals/${jiraKey}/mark-xxl-notified`, {});
-      router.refresh();
-    } catch (e) {
-      const msg = e instanceof ApiError ? e.detail : "Error al notificar";
-      setErrors((prev) => ({ ...prev, [jiraKey]: msg }));
-    } finally {
-      setLoadingKey(null);
-    }
-  }
-
+/** XXL detectadas — talla rechazada, requieren ruptura. Read-only (WP-24). */
+export function XxlSection({ items, jiraBaseUrl }: Props) {
   return (
-    <div className="rounded-md border border-border overflow-hidden">
-      <div className="px-4 py-2.5 border-b border-border bg-muted/30">
+    <div className="rounded-md border border-destructive/40 overflow-hidden">
+      <div className="px-4 py-2.5 border-b border-border bg-destructive/10">
         <p className="text-xs text-muted-foreground">
-          Estas subtasks tienen talla XXL y deben dividirse en subtasks más pequeñas
-          antes de ser trabajadas. Máximo permitido es XL (8 CP).
+          Estas subtasks tienen talla XXL: no se aceptan y su CP no se lockea.
+          Deben dividirse en subtasks más pequeñas (máximo permitido: XL, 8 CP).
         </p>
       </div>
       <Table>
@@ -51,32 +29,35 @@ export function XxlSection({ items }: Props) {
             <TableHead>Key</TableHead>
             <TableHead>Summary</TableHead>
             <TableHead>Área</TableHead>
-            <TableHead className="text-right">Acción</TableHead>
+            <TableHead>Player</TableHead>
+            <TableHead>Status</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
           {items.map((item) => (
             <TableRow key={item.jira_key}>
-              <TableCell className="font-mono text-xs">{item.jira_key}</TableCell>
+              <TableCell className="font-mono text-xs">
+                {jiraBaseUrl ? (
+                  <a
+                    href={`${jiraBaseUrl}/browse/${item.jira_key}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="hover:underline text-primary"
+                  >
+                    {item.jira_key}
+                  </a>
+                ) : (
+                  item.jira_key
+                )}
+              </TableCell>
               <TableCell className="text-sm max-w-xs">
                 <span className="line-clamp-2">{item.summary}</span>
               </TableCell>
               <TableCell className="text-sm text-muted-foreground">{item.area}</TableCell>
-              <TableCell className="text-right">
-                <div className="flex flex-col items-end gap-1">
-                  <Button
-                    size="xs"
-                    variant="outline"
-                    disabled={loadingKey === item.jira_key}
-                    onClick={() => handleMarkNotified(item.jira_key)}
-                  >
-                    {loadingKey === item.jira_key ? "Guardando…" : "Marcar notificado"}
-                  </Button>
-                  {errors[item.jira_key] && (
-                    <p className="text-xs text-destructive">{errors[item.jira_key]}</p>
-                  )}
-                </div>
+              <TableCell className="text-sm text-muted-foreground">
+                {item.assignee_name ?? "—"}
               </TableCell>
+              <TableCell className="text-sm text-muted-foreground">{item.status}</TableCell>
             </TableRow>
           ))}
         </TableBody>

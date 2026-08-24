@@ -26,7 +26,11 @@ Juan Castillo (id 7): Ready canónico 1900.78 = Ready 1279.64 + Ready for QA 621
 ## SP append-only — demo limpio (WP-11)
 Reversión total restaura exacto; reducción parcial 2.0→−2.0→+1.5=neto −0.5; límite topa en 0; cero UPDATEs de `amount_sp`.
 
-## Inmutabilidad CP
-`cp_approved_at` count = **56** — verificado igual antes/después en cada WP desde su aprobación.
+## Inmutabilidad CP (reformulado en WP-24 — [[ADR-016 Deprecacion del gate CP y auto-lock]])
+~~`cp_approved_at` count = **56**~~ — el conteo fijo dejó de ser el invariante: las aprobaciones manuales del PM lo movieron a 138 antes de WP-24, y el auto-lock lo hace crecer con cada sync (by design). El invariante vigente:
+1. **Toda subtask activa con CP válido no-XXL queda lockeada** (`cp_approved_at NOT NULL`) tras el sync; XXL y sin-CP nunca se lockean.
+2. **La inmutabilidad se mantiene**: un cambio de `cp` en Jira post-lock se ignora (flag `cp_modified_post_approval` + `cp_change_attempted_post_approval` en audit_log).
+3. **Las filas históricas aprobadas manualmente** (`cp_approved_by NOT NULL`, 138 al 2026-07-01) quedan byte-idénticas; el auto-lock usa el sentinela `cp_approved_by = NULL`.
+Verificación: `test_cp_autolock.py::test_golden_invariant_all_valid_non_xxl_locked` + `test_sync_cp_immutability.py`.
 
 Enlaces: [[Atribucion de Tiempo WP-07h]] · [[Economia CP-SP]] · [[Patrones que Funcionan]]

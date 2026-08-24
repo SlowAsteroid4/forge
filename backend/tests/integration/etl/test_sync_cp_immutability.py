@@ -160,3 +160,66 @@ def test_sync_no_flag_when_cp_unchanged(db_session: Session) -> None:
     assert st is not None
     assert st.cp == 5
     assert st.cp_modified_post_approval is False
+
+
+def test_sync_does_not_overwrite_auto_locked_cp(db_session: Session) -> None:
+    """WP-24: la inmutabilidad aplica igual cuando el lock vino del auto-lock.
+
+    Subtask lockeada por el sistema (cp_approved_by=NULL) → un cambio de cp
+    en Jira post-lock se ignora, exactamente como con la aprobación manual.
+    """
+    from forge.services.engine.cp_autolock import auto_lock_cp
+
+    project = Project(
+        code="YAP", jira_prefix="YAP", internal_name="Yapsi", arena_name="Yapsi Dungeon"
+    )
+    db_session.add(project)
+    db_session.flush()
+    st = Subtask(
+        jira_key="YAP-100",
+        issue_type="Sub-task",
+        area="BE",
+        summary="Subtask auto-lockeada",
+        status="Done",
+        complexity_size="M",
+        cp=3,
+        last_synced_at=datetime.utcnow(),
+    )
+    db_session.add(st)
+    db_session.commit()
+
+    assert auto_lock_cp(db_session) == 1
+    db_session.commit()
+    assert st.cp_approved_at is not None
+    assert st.cp_approved_by is None  # sentinela de sistema
+
+    orchestrator = SyncOrchestrator(session=db_session)
+    fake_time_metrics: dict = {
+        "done_at": datetime(2026, 5, 2),
+        "cp": 8,
+        "complexity_size": "XL",
+    }
+    with (
+        patch(
+            "forge.etl.sync_orchestrator.extract_time_metrics",
+            return_value=fake_time_metrics,
+        ),
+        patch(
+            "forge.etl.sync_orchestrator.extract_quality_metrics",
+            return_value={"qa_attempts": 0, "review_rejections": 0, "qa_first_pass": True},
+        ),
+        patch(
+            "forge.etl.sync_orchestrator.match_project",
+            return_value="YAP",
+        ),
+    ):
+        orchestrator._sync_subtask(_make_jira_issue(), stats={
+            "subtasks_created": 0, "subtasks_updated": 0, "errors": []
+        })
+        db_session.commit()
+
+    refreshed = db_session.get(Subtask, "YAP-100")
+    assert refreshed is not None
+    assert refreshed.cp == 3, "CP auto-lockeado debe ser inmutable"
+    assert refreshed.complexity_size == "M"
+    assert refreshed.cp_modified_post_approval is True

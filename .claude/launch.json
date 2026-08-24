@@ -8,6 +8,14 @@
       "cwd": "frontend",
       "port": 3000,
       "autoPort": false
+    },
+    {
+      "name": "forge-backend",
+      "runtimeExecutable": "uv",
+      "runtimeArgs": ["run", "uvicorn", "forge.main:app", "--port", "8000"],
+      "cwd": "backend",
+      "port": 8000,
+      "autoPort": false
     }
   ]
 }

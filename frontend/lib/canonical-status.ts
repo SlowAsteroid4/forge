@@ -20,9 +20,9 @@ export const CANONICAL_ORDER: CanonicalStatus[] = [
 export const CANONICAL_COLORS: Record<CanonicalStatus, string> = {
   Backlog: "#60A5FA",
   Ready: "#CBD5E1",
-  "In Progress": "#E5E7EB",
-  "In Review": "#E5E7EB",
-  "In QA": "#E5E7EB",
+  "In Progress": "#FDE68A",
+  "In Review": "#DDD6FE",
+  "In QA": "#99F6E4",
   Waiting: "#C7D2FE",
   Blocked: "#FCA5A5",
   Done: "#4ADE80",

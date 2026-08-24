@@ -167,8 +167,9 @@ class CycleService:
         Validaciones BLOQUEANTES (impiden cierre):
           - Subtasks Done sin sp_final calculado.
 
-        Validaciones WARNING (no bloquean):
-          - CP propuestos (cp_approval_required=1, cp_approved_at=None) sin aprobar.
+        Validaciones WARNING: ninguna actualmente. El warning "CP propuestos sin
+        aprobar" se retiró en WP-24/ADR-016 — ese estado ya no existe (el CP se
+        auto-lockea en el sync).
         """
         cycle = self._get_cycle(cycle_id)
 
@@ -265,23 +266,9 @@ class CycleService:
                 }
             )
 
-        # Validaciones warning
-        from sqlalchemy import func
-
-        pending_cp_count: int = self._session.scalar(
-            select(func.count()).select_from(Subtask).where(
-                Subtask.cycle_id == cycle_id,
-                Subtask.cp_approval_required.is_(True),
-                Subtask.cp_approved_at.is_(None),
-            )
-        ) or 0
-
+        # Sin validaciones warning activas (WP-24 retiró "CP sin aprobar");
+        # la lista se conserva por compatibilidad del contrato de respuesta.
         warnings: list[str] = []
-        if pending_cp_count:
-            warnings.append(
-                f"{pending_cp_count} subtasks con CP propuesto sin aprobar. "
-                "El cierre procederá pero su SP puede estar incompleto."
-            )
 
         return {
             "cycle_id": cycle_id,

@@ -1,12 +1,10 @@
 """SubtaskRepository — acceso a datos de subtasks."""
 
-from datetime import datetime, timedelta
 from typing import Any
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from forge.core.exceptions import CPImmutableError, NotFoundError
 from forge.db.models.subtask import Subtask
 from forge.repositories.base import BaseRepository
 
@@ -48,54 +46,10 @@ class SubtaskRepository(BaseRepository[Subtask, str]):
             stmt = stmt.where(Subtask.assignee_player_id == player_id)
         return list(self._session.scalars(stmt))
 
-    def list_pending_cp_approval(
-        self,
-        area: str | None = None,
-        player_id: int | None = None,
-        project_code: str | None = None,
-        min_waiting_days: int | None = None,
-        statuses: list[str] | None = None,
-    ) -> list[Subtask]:
-        """Subtasks L/XL pendientes de aprobación de CP, con filtros opcionales.
-
-        El parámetro ``statuses`` permite aplicar un gate por status (p.ej.
-        ``['Backlog']`` para aprobar antes de que arranque el trabajo, que es lo
-        que indica AC-4.2).  El default ``None`` desactiva el filtro y muestra
-        todas las tallas L/XL sin importar el status — comportamiento actual en
-        producción mientras el equipo decide dónde colocar el gate.
-
-        ⚠️ DECISIÓN PENDIENTE (chat maestro): la distribución real es
-           Done=18, Ready=7, In QA=6, Ready for QA=2, Backlog=1, otros=1.
-           Usar ``statuses=['Backlog']`` dejaría la cola con 1 item.
-           ¿El gate va en Backlog (pre-work) o se valida post-trabajo?
-        """
-        stmt = select(Subtask).where(
-            Subtask.cp_approval_required.is_(True),
-            Subtask.cp_approved_at.is_(None),
-        )
-        if statuses is not None:
-            stmt = stmt.where(Subtask.status.in_(statuses))
-        if area is not None:
-            stmt = stmt.where(Subtask.area == area)
-        if player_id is not None:
-            stmt = stmt.where(Subtask.assignee_player_id == player_id)
-        if project_code is not None:
-            stmt = stmt.where(Subtask.project_code == project_code)
-        if min_waiting_days is not None:
-            cutoff = datetime.utcnow() - timedelta(days=min_waiting_days)
-            stmt = stmt.where(
-                (Subtask.cp_proposed_at <= cutoff) | Subtask.cp_proposed_at.is_(None)
-            )
-        return list(self._session.scalars(stmt))
-
     def list_xxl_detected(self) -> list[Subtask]:
         """Subtasks con talla XXL (deben dividirse)."""
         stmt = select(Subtask).where(Subtask.complexity_size == "XXL")
         return list(self._session.scalars(stmt))
-
-    def get_for_approval(self, jira_key: str) -> Subtask | None:
-        """Subtask con contexto completo para el flujo de aprobación."""
-        return self._session.get(Subtask, jira_key)
 
     def get_cp_sum(self, player_id: int, cycle_id: int | None = None) -> float:
         """Suma de CP de subtasks Done del player (para leaderboard)."""
@@ -142,17 +96,4 @@ class SubtaskRepository(BaseRepository[Subtask, str]):
             if key == "jira_key":
                 continue
             setattr(subtask, key, value)
-        return self.update(subtask)
-
-    def approve_cp(
-        self, jira_key: str, approver_id: int, approved_at: datetime
-    ) -> Subtask:
-        """Sella cp_approved_at. Lanza CPImmutableError si ya fue aprobado."""
-        subtask = self.get(jira_key)
-        if subtask is None:
-            raise NotFoundError(f"Subtask {jira_key} no encontrada")
-        if subtask.cp_approved_at is not None:
-            raise CPImmutableError(jira_key)
-        subtask.cp_approved_by = approver_id
-        subtask.cp_approved_at = approved_at
         return self.update(subtask)

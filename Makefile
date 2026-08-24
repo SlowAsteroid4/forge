@@ -1,13 +1,20 @@
-.PHONY: help install dev test lint format clean sync seed run
+.PHONY: help install dev dev-all test lint format clean sync seed run
 
 help: ## Mostrar esta ayuda
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
 
-install: ## Instalar dependencias (backend)
+install: ## Instalar dependencias (backend + frontend)
 	cd backend && uv sync
+	cd frontend && npm install
 
-dev: ## Arrancar servidor de desarrollo
+dev: ## Arrancar servidor de desarrollo (solo backend)
 	cd backend && uv run uvicorn forge.main:app --reload --port 8000
+
+dev-all: ## Arrancar backend (:8000) y frontend (:3000) juntos, Ctrl+C mata ambos
+	@trap 'kill 0' EXIT INT TERM; \
+	(cd backend && uv run uvicorn forge.main:app --reload --port 8000) & \
+	(cd frontend && npm run dev) & \
+	wait
 
 test: ## Correr todos los tests
 	cd backend && uv run pytest

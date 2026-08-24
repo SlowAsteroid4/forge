@@ -31,9 +31,9 @@ CANONICAL_ORDER: tuple[str, ...] = (
 CANONICAL_COLORS: dict[str, str] = {
     "Backlog": "#60A5FA",      # azul
     "Ready": "#CBD5E1",        # gris claro
-    "In Progress": "#E5E7EB",  # neutro
-    "In Review": "#E5E7EB",    # neutro
-    "In QA": "#E5E7EB",        # neutro
+    "In Progress": "#FDE68A",  # ámbar tenue
+    "In Review": "#DDD6FE",    # violeta tenue
+    "In QA": "#99F6E4",        # teal tenue
     "Waiting": "#C7D2FE",      # índigo tenue
     "Blocked": "#FCA5A5",      # rojo
     "Done": "#4ADE80",         # verde

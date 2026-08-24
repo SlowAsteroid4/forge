@@ -70,6 +70,17 @@
   is_lead: true       # Lead FE — activa M_lider
   is_active: true
 
+- jira_account_id: "712020:6380f146-7a8d-4e7f-8ff4-f8102ae61209"
+  display_name: "David Enriquez Solis"
+  email: null
+  area: "FE"
+  employment_type: "internal"   # misma convención que Alan/Artemio/Luis (por hora pero internal)
+  hourly_rate: 250.00           # MXN/hora
+  # monthly_hours_cap: PENDIENTE — necesario para calcular su costo
+  is_lead: false
+  is_active: true
+  joined_at: "2026-07-28"       # primera asignación en Jira (YAP-1276)
+
 - jira_account_id: "5aa0237db99ac53e2815a723"
   display_name: "Luis Alberto Cruz Mora"
   email: null
@@ -86,13 +97,17 @@
   is_lead: false
   is_active: true
 
+# Baja 2026-08-24 — ya no trabaja con el equipo.
+# NO se borra el registro: sus 5 subtasks Done / 18 CP siguen en el histórico
+# de ciclos cerrados. is_active=false lo saca de dashboards, costos, leaderboard,
+# MVP y login de Arena.
 - jira_account_id: "62152ed92d057500723f0d0e"
   display_name: "Yair Emmanuel Arrias Madera"
   email: null
   area: "FE"
   employment_type: "internal"
   is_lead: false
-  is_active: true
+  is_active: false
 
 # ─── Design ───────────────────────────────────────────
 - jira_account_id: "63c97b19d16a886a25e6bfb4"
